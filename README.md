@@ -7,11 +7,11 @@ Details of all current progress to date, together with illustrations of results,
 
 Our work began from a point in which appropriate quality control procedures had already been performed on UKBB genotype data and we had access to BMI information for 502,554 individuals and T2D status for 502,524 individuals. Description of the scripts used in our workflow is included below. 
 
+&nbsp;
 
+## Generation of GWAS summary statistics for BMI and T2D
 
-### Generation of GWAS summary statistics for BMI and T2D
-
-#### Step 1: Splitting each data set in two  
+### Step 1: Splitting each data set in two  
 
 
 **split_bmi.R:** 
@@ -34,7 +34,7 @@ This R script takes a text file containing individual ID numbers and correspondi
 &nbsp;
 
 
-#### Step 2: Performing two GWASs for each trait 
+### Step 2: Performing two GWASs for each trait 
 
 
 **parallelA_bmi.sh:** 
@@ -63,7 +63,6 @@ This shell script allows us to run the commands contained in *T2DB.sh* for each 
 
 - ***Input:*** T2DB.sh
 
-&nbsp;
 
 **bmiA.sh:**
 
@@ -99,7 +98,7 @@ This shell script first uses PLINK 2.0 to produce \*_qcd_T2DB.bim, \*_qcd_T2DB.b
 &nbsp;
 
 
-#### Step 3: Combining results 
+### Step 3: Combining results 
 
 
 **summary_data_bmi.R:**
@@ -112,7 +111,6 @@ This R script is designed to combine all summary statistics obtained from perfor
 This R script is designed to combine all summary statistics obtained from performing our two *T2D* GWASs together in a suitable format, in which one GWAS is considered to be the discovery GWAS and the other the replication GWAS. The output is a text file which contains information regarding chromosome, position, rsID, effect size (`OR`) and corresponding standard error (`LOG(OR)_SE`) from the discovery GWAS as well as effect size from the replication GWAS for each variant. 
 
 
-&nbsp;
 
 **summary_data_bmi_1.sh:**
 
