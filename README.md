@@ -90,14 +90,14 @@ This R script is designed to combine all summary statistics obtained from perfor
 
 **summary_data_bmi_1.sh:**
 
-This shell script specifies that the files *bmiA*_res_\*.PHENO1.glm.linear for chromosomes 1 to 22 are to be used as the discovery GWAS results and the files *bmiB*_res_\*.PHENO1.glm.linear as the replication GWAS results for the R script summary_data_bmi.R.
+This shell script specifies that the files bmiA_res_\*.PHENO1.glm.linear for chromosomes 1 to 22 are to be used as the discovery GWAS results and the files *bmiB*_res_\*.PHENO1.glm.linear as the replication GWAS results for the R script summary_data_bmi.R.
 
 - ***Input:*** summary_data_bmi.R, bmiA_res_\*.PHENO1.glm.linear for each chromosome, bmiB_res_\*.PHENO1.glm.linear for each chromosome
 - ***Output:*** summary_data_bmi_1.txt
 
 **summary_data_bmi_2.sh:**
 
-This shell script specifies that the files *bmiB*_res_\*.PHENO1.glm.linear for chromosomes 1 to 22 are to be used as the discovery GWAS results and the files *bmiA*_res_\*.PHENO1.glm.linear as the replication GWAS results for the R script summary_data_bmi.R.
+This shell script specifies that the files bmiB_res_\*.PHENO1.glm.linear for chromosomes 1 to 22 are to be used as the discovery GWAS results and the files *bmiA*_res_\*.PHENO1.glm.linear as the replication GWAS results for the R script summary_data_bmi.R.
 
 - ***Input:*** summary_data_bmi.R, bmiB_res_\*.PHENO1.glm.linear for each chromosome, bmiA_res_\*.PHENO1.glm.linear for each chromosome
 - ***Output:*** summary_data_bmi_2.txt
@@ -187,7 +187,7 @@ This R script is designed to combine all summary statistics obtained from perfor
 
 **summary_data_T2D_1.sh:**
 
-This shell script specifies that the files *T2DA*_res_\*.PHENO1.glm.logistic.hybrid for chromosomes 1 to 22 are to be used as the discovery GWAS results and the files *T2DB*_res_\*.PHENO1.glm.logistic.hybrid as the replication GWAS results for the R script summary_data_bmi.R.
+This shell script specifies that the files T2DA_res_\*.PHENO1.glm.logistic.hybrid for chromosomes 1 to 22 are to be used as the discovery GWAS results and the files *T2DB*_res_\*.PHENO1.glm.logistic.hybrid as the replication GWAS results for the R script summary_data_bmi.R.
 
 - ***Input:*** summary_data_T2D.R, T2DA_res_\*.PHENO1.glm.logistic.hybrid for each chromosome, T2DB_res_\*.PHENO1.glm.logistic.hybrid for each chromosome
 - ***Output:*** summary_data_T2D_1.txt
@@ -195,7 +195,7 @@ This shell script specifies that the files *T2DA*_res_\*.PHENO1.glm.logistic.hyb
 
 **summary_data_T2D_2.sh:**
 
-This shell script specifies that the files *T2DB*_res_\*.PHENO1.glm.logistic.hybrid for chromosomes 1 to 22 are to be used as the discovery GWAS results and the files *T2DA*_res_\*.PHENO1.glm.logistic.hybrid as the replication GWAS results for the R script summary_data_bmi.R. 
+This shell script specifies that the files T2DB_res_\*.PHENO1.glm.logistic.hybrid for chromosomes 1 to 22 are to be used as the discovery GWAS results and the files *T2DA*_res_\*.PHENO1.glm.logistic.hybrid as the replication GWAS results for the R script summary_data_bmi.R. 
 
 
 - ***Input:*** summary_data_T2D.R, T2DB_res_\*.PHENO1.glm.logistic.hybrid for each chromosome, T2DA_res_\*.PHENO1.glm.logistic.hybrid for each chromosome
