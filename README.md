@@ -27,7 +27,9 @@ The following code was run:
 
 `sbatch summary_data_bmi_1.sh`   
 
-`sbatch summary_data_bmi_2.sh`   
+`sbatch summary_data_bmi_2.sh`  
+
+`sbatch linkdis_bmiA.sh`
 
 &nbsp;
 
@@ -101,6 +103,23 @@ This shell script specifies that the files bmiB_res_\*.PHENO1.glm.linear for chr
 
 - ***Input:*** summary_data_bmi.R, bmiB_res_\*.PHENO1.glm.linear for each chromosome, bmiA_res_\*.PHENO1.glm.linear for each chromosome
 - ***Output:*** summary_data_bmi_2.txt
+
+&nbsp;
+
+### Step 4: Producing LD-pruned set of SNPs
+
+**linkdis_bmiA.sh:**
+
+This shell script produces a list of pruned SNPs that are in approximate linkage equilibrium in which window size has been specified as 50, step size as 5 and the $R^2$ threshold as 0.5. 
+
+- ***Input:*** \*_qcd_bmiA.bim, \*_qcd_bmiA.bed, \*_qcd_bmiA.fam files for each chromosome 
+- ***Output:*** pruned_SNPs_bmi_1.txt
+
+
+**join_pruned.R:**
+
+This R script is used to combine the list of pruned SNPs that are in approximate linkage equilibrium for all 22 chromosomes in one text file.
+
 
 
 &nbsp;
