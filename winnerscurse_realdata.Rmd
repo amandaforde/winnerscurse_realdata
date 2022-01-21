@@ -1,0 +1,1565 @@
+---
+title: "Evaluating Winner's Curse correction methods using real data sets"
+author: ""
+date: ""
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(winnerscurse)
+library(ggplot2)
+library(dplyr)
+library(scam)
+library("RColorBrewer")
+col <- brewer.pal(8,"Dark2")
+```
+
+
+
+In this document, we will detail our investigation of the performance of various Winner's Curse correction methods when they are applied to real data sets. These methods include 3 conditional likelihood approaches, Empirical Bayes, FDR Inverse Quantile Transformation and a bootstrap method which has been adapted for use with summary data. The methods were all implemented using the R package, `winnerscurse`. Note that we are focusing on those methods which make adjustments using only summary statistics from the discovery GWAS, rather than methods which combine information gained from both discovery and replication GWASs. In our study, the replication GWAS is used to assist in measuring how well each correction method performs. 
+
+We first begin with a discussion of the two data sets we have used, namely BMI and Type 2 Diabetes (T2D), and analyze the summary statistics obtained upon performing two independent GWASs for each trait. Recall that the Winner’s Curse is a statistical effect usually resulting in the exaggeration of SNP-trait association estimates in the sample in which these associations were discovered. In order to ensure that unbiased association estimates are obtained, the current common practice is that one GWAS is used to *discover* the significant SNPs and another GWAS, namely a replication GWAS, is performed to obtain the corresponding effect size estimates for each of these significant SNPs. For this reason, we randomly split the large data set in two for each trait, allowing us to conduct a *discovery* GWAS and a corresponding independent *replication* GWAS. The intention is that we will be able to compare the association estimates obtained in both GWASs for those SNPs that have been deemed significant in the *discovery* GWAS according to a specified threshold such as `5e-8`.
+
+We then consider how these Winner's Curse correction methods could be evaluated using this real data. Finally, we investigate various changes that could be made to these methods in order to potentially improve performance, allowing us to obtain more accurate association estimates. 
+
+
+**Note:** Our work begins at a starting point in which suitable quality control procedures have already been applied to the UKBB genotype data such as the removal of related individuals and the execution of principal component analysis. Further details of both R and shell scripts used can be found in `README.md`. 
+
+
+<br>
+
+
+
+## BMI GWAS
+
+
+The first data set which we will explore contains BMI information from a large number of individuals, obtained from the UKBB. The original data set contained BMI values for a total of 502,554 individuals. The pre-processing steps and implementation of `split_bmi.R` resulted in two independent data sets. The first, namely `bmi_gwasA.txt`, contained 166,286 individuals for which genotype data was also available while the second, namely `bmi_gwasB.txt` contained 166,332. 
+
+Using PLINK 2.0, we performed both GWASs and obtained two sets of summary statistics for a total of 7,915,560 SNPs. We will refer to the instance in which `bmi_gwasA.txt` has been used to conduct the discovery GWAS and `bmi_gwasB.txt` has been used for the replication GWAS as **BMI GWAS 1**. Similarly, we will refer to the case in which `bmi_gwasB.txt` has been used for the discovery GWAS and `bmi_gwasA.txt` for the replication as **BMI GWAS 2**. 
+
+
+In **BMI GWAS 1**, we find 6,908 significant SNPs at the `5e-8` threshold and 94,173 significant SNPs at the `5e-4` threshold. In **BMI GWAS 2**, there are 7,951 significant SNPs at the `5e-8` threshold and 98,351 significant SNPs at the `5e-4` threshold. 
+
+
+We proceed by plotting $z$ vs $\text{bias}$ for all SNPs, similar to plots produced in our simulation study. Here, we define $z = \frac{\beta_{\text{disc}}}{\text{se}_{\text{disc}}}$ and $\text{bias} = \beta_{\text{disc}} - \beta_{\text{rep}}$. 
+
+In **BMI GWAS 1**, we find that out of the 6,908 significant SNPs at `5e-8`, 4,929 of these SNPs have an association estimate which is more extreme in the discovery GWAS than in the replication, i.e. $\mid \beta_{\text{disc}} \mid > \mid \beta_{\text{rep}} \mid$. This is clear evidence of the bias induced by Winner's Curse. Defining a SNP having a *significantly* more extreme effect size estimate in the discovery GWAS as one which satisfies $\mid \beta_{\text{disc}} \mid > \mid \beta_{\text{rep}} \mid + 1.96 \cdot \text{se}_{\text{disc}}$, we find that 1,555 SNPs have *significantly* more extreme association estimates in the discovery GWAS. These are SNPs which suffer from Winner's Curse the most. In the below two plots, these SNPs which also pass a threshold of `5e-4` are highlighted in <span style="color: navy;">navy</span>. 
+
+
+
+```{r, echo=FALSE}
+summary_data_bmi_1 <-  read.table('data/summary_data_bmi_1.txt',header=TRUE)
+```
+
+```{r, echo=FALSE, eval=FALSE}
+out <- summary_data_bmi_1
+out$bias <- out$beta - out$beta_rep
+out$z <- out$beta/out$se
+subout <- out[(abs(out$beta) > (abs(out$beta_rep) + 1.96*out$se)) & (abs(out$beta/out$se) > qnorm(1-(5e-4)/2)),]
+ggplot(out,aes(x=z,y=bias)) + geom_point(size=1) + geom_point(data=subout, 
+             aes(x=z,y=bias), 
+             color='navy',
+             size=1) + xlab("z") +
+  ylab("bias") + ggtitle("BMI GWAS 1") +  theme_classic() + geom_vline(xintercept=qnorm(1-(5e-8)/2), colour="red", linetype="dashed",size=1) + geom_vline(xintercept=-qnorm(1-(5e-8)/2), colour="red", linetype="dashed",size=1) +
+geom_vline(xintercept=qnorm(1-(5e-4)/2), colour="darkred", linetype="dashed",size=1) + geom_vline(xintercept=-qnorm(1-(5e-4)/2), colour="darkred", linetype="dashed",size=1) + geom_hline(yintercept=0) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face="bold", colour=col[1]),
+  )
+```
+
+```{r, echo=FALSE, out.width = '80%'}
+knitr::include_graphics("images/BMI1_z_bias_sig.png")
+```
+
+In **BMI GWAS 2**, we find that out of the 7,951 significant SNPs at `5e-8`, 6,368 of these SNPs have an association estimate which is more extreme in the discovery GWAS than in the replication. We find that 2,546 SNPs have *significantly* more extreme association estimates in the discovery GWAS. 
+
+
+```{r, echo=FALSE}
+summary_data_bmi_2 <-  read.table('data/summary_data_bmi_2.txt',header=TRUE)
+```
+
+
+```{r, echo=FALSE, eval=FALSE}
+out <- summary_data_bmi_2
+out$bias <- out$beta - out$beta_rep
+out$z <- out$beta/out$se
+subout <- out[(abs(out$beta) > (abs(out$beta_rep) + 1.96*out$se)) & (abs(out$beta/out$se) > qnorm(1-(5e-4)/2)),]
+ggplot(out,aes(x=z,y=bias)) + geom_point(size=1) + geom_point(data=subout, 
+             aes(x=z,y=bias), 
+             color='navy',
+             size=1) + xlab("z") +
+  ylab("bias") + ggtitle("BMI GWAS 2") +  theme_classic() + geom_vline(xintercept=qnorm(1-(5e-8)/2), colour="red", linetype="dashed",size=1) + geom_vline(xintercept=-qnorm(1-(5e-8)/2), colour="red", linetype="dashed",size=1) +
+geom_vline(xintercept=qnorm(1-(5e-4)/2), colour="darkred", linetype="dashed",size=1) + geom_vline(xintercept=-qnorm(1-(5e-4)/2), colour="darkred", linetype="dashed",size=1) + geom_hline(yintercept=0) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face="bold", colour=col[2]),
+  )
+```
+
+```{r, echo=FALSE, out.width = '80%'}
+knitr::include_graphics("images/BMI2_z_bias_sig.png")
+```
+
+However, we notice in the above plot that many of the SNPs which have a $z$-value greater than 10 actually have negative bias, meaning that their association estimates in the replication GWAS are greater than their association estimate in the discovery GWAS. This is indeed contrary to what we would expect. *A possible explanation is that LD could be responsible for this observation?*. 
+
+We find there to be 3,562 SNPs which are in both sets of significant SNPs at the `5e-8` threshold, while there are 30,595 SNPs in both sets at the `5e-4` threshold.  
+
+
+```{r, echo=FALSE, eval=FALSE}
+summary_data <- dplyr::arrange(summary_data_bmi_1,dplyr::desc(abs(summary_data_bmi_1$beta/summary_data_bmi_1$se)))
+z <- summary_data$beta/summary_data$se
+p_val <- 2*(1-stats::pnorm(abs(z)))
+summary_data <- cbind(summary_data, z, p_val)
+summary_data_sig_bmi_1 <- summary_data[summary_data$p_val<5e-8,]
+summary_data_sig_bmi_1_a <- summary_data[summary_data$p_val<5e-4,]
+## 5e-8: 6908 sig SNPs
+## 5e-4: 94173 sig SNPs 
+summary_data <- dplyr::arrange(summary_data_bmi_2,dplyr::desc(abs(summary_data_bmi_2$beta/summary_data_bmi_2$se)))
+z <- summary_data$beta/summary_data$se
+p_val <- 2*(1-stats::pnorm(abs(z)))
+summary_data <- cbind(summary_data, z, p_val)
+summary_data_sig_bmi_2 <- summary_data[summary_data$p_val<5e-8,]
+summary_data_sig_bmi_2_a <- summary_data[summary_data$p_val<5e-4,]
+## 5e-8: 7951 sig SNPs
+## 5e-4: 98351 sig SNPs
+overlap_bmi_sig_5e_8 <- intersect(summary_data_sig_bmi_1$rsid, summary_data_sig_bmi_2$rsid)
+overlap_bmi_sig_5e_4 <- intersect(summary_data_sig_bmi_1_a$rsid, summary_data_sig_bmi_2_a$rsid)
+## 5e-8: 3562 overlapping sig SNPs
+## 5e-4: 30595 overlapping sig SNPs 
+```
+
+
+We now construct two Manhattan-style plots, in which `position` is plotted against `abs(z)` for all SNPs, grouped by chromosome. Points in <span style="color: darkred;"> dark red </span> represent SNPs which are also significant at the `5e-8` threshold in the corresponding replication GWAS.   
+
+
+```{r, echo=FALSE, eval=FALSE}
+## BMI 1
+z <- summary_data_bmi_1$beta/summary_data_bmi_1$se
+p_val <- 2*(1-stats::pnorm(abs(z)))
+log_p_val <- -log10(p_val)
+summary_data_bmi_1 <- cbind(summary_data_bmi_1, z, p_val, log_p_val)
+summary_data_sig_bmi_1 <- summary_data_bmi_1[summary_data_bmi_1$p_val < 5e-8,]
+subout <- summary_data_sig_bmi_1[summary_data_sig_bmi_1$rsid %in% overlap_bmi_sig_5e_8,]
+ggplot(summary_data_bmi_1, aes(x=pos,y=abs(z))) + geom_point(size=1) + geom_point(data=subout, 
+             aes(x=pos,y=abs(z)), 
+             color='darkred',
+             size=1) + facet_wrap(~chr, nrow=1) + labs(x="position", y="|z|",title="BMI GWAS 1", subtitle="by chromosome") + geom_hline(yintercept=qnorm(1-(5e-8)/2)) + 
+  theme(
+    plot.title = element_text(hjust = 0.5, face="bold",color=col[1]),axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(), plot.subtitle = element_text(hjust = 0.5, face="italic")
+  )
+
+
+## BMI 2
+z <- summary_data_bmi_2$beta/summary_data_bmi_2$se
+p_val <- 2*(1-stats::pnorm(abs(z)))
+log_p_val <- -log10(p_val)
+summary_data_bmi_2 <- cbind(summary_data_bmi_2, z, p_val, log_p_val)
+summary_data_sig_bmi_2 <- summary_data_bmi_2[summary_data_bmi_2$p_val < 5e-8,]
+subout <- summary_data_sig_bmi_2[summary_data_sig_bmi_2$rsid %in% overlap_bmi_sig_5e_8,]
+ggplot(summary_data_bmi_2, aes(x=pos,y=abs(z))) + geom_point(size=1) + geom_point(data=subout, 
+             aes(x=pos,y=abs(z)), 
+             color='darkred',
+             size=1) + facet_wrap(~chr, nrow=1) + labs(x="position", y="|z|",title="BMI GWAS 2", subtitle="by chromosome") + geom_hline(yintercept=qnorm(1-(5e-8)/2)) + 
+  theme(
+    plot.title = element_text(hjust = 0.5, face="bold",color=col[2]),axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(), plot.subtitle = element_text(hjust = 0.5, face="italic")
+  )
+```
+
+```{r, echo=FALSE, out.width = '80%'}
+knitr::include_graphics("images/BMI1_pos_abs(z)_full.png")
+knitr::include_graphics("images/BMI2_pos_abs(z)_full.png")
+```
+
+
+
+<br>
+
+## T2D GWAS 
+
+
+The second data set which we will use contains T2D status for 502,524 individuals. The pre-processing steps and implementation of `split_T2D.R` resulted in two independent data sets. The first, namely `T2D_gwasA.txt`, contained 1,344 cases and 165,126 controls for which genotype data was also available while the second, namely `T2D_gwasB.txt` contained 1,297 cases and 165,875 controls. 
+
+Using PLINK 2.0, we performed both GWASs and obtained two sets of summary statistics for a total of 7,915,560 SNPs. Similar to what we have done above with BMI, we will refer to the instance in which `T2D_gwasA.txt` has been used to conduct the discovery GWAS and `T2D_gwasB.txt` has been used for the replication GWAS as **T2D GWAS 1**. Similarly, we will refer to the case in which `T2D_gwasB.txt` has been used for the discovery GWAS and `T2D_gwasA.txt` for the replication as **T2D GWAS 2**. 
+
+In **T2D GWAS 1**, we find 31 significant SNPs at the `5e-8` threshold and 5,832 significant SNPs at the `5e-4` threshold. In **T2D GWAS 2**, there are 76 significant SNPs at the `5e-8` threshold and 5507 significant SNPs at the `5e-4` threshold. 
+
+We plot $z$ vs $\text{bias}$ for all SNPs.
+
+In **T2D GWAS 1**, we find that out of the 31 significant SNPs at `5e-8`, 2 of these SNPs have an association estimate which is more extreme in the discovery GWAS than in the replication. We find that both of these 2 SNPs have *significantly* more extreme association estimates in the discovery GWAS.  
+
+
+```{r, echo=FALSE}
+summary_data_T2D_1 <-  read.table('data/summary_data_T2D_1.txt',header=TRUE)
+summary_data_T2D_1$beta <- log(summary_data_T2D_1$beta)
+summary_data_T2D_1$beta_rep <- log(summary_data_T2D_1$beta_rep)
+```
+
+
+```{r, echo=FALSE, eval=FALSE}
+out <- summary_data_T2D_1
+out$bias <- out$beta - out$beta_rep
+out$z <- out$beta/out$se
+subout <- out[(abs(out$beta) > (abs(out$beta_rep) + 1.96*out$se)) & (abs(out$beta/out$se) > qnorm(1-(5e-4)/2)),]
+ggplot(out,aes(x=z,y=bias)) + geom_point(size=1) + geom_point(data=subout, 
+             aes(x=z,y=bias), 
+             color='navy',
+             size=1) + xlab("z") +
+  ylab("bias") + ggtitle("T2D GWAS 1") +  theme_classic() + geom_vline(xintercept=qnorm(1-(5e-8)/2), colour="red", linetype="dashed",size=1) + geom_vline(xintercept=-qnorm(1-(5e-8)/2), colour="red", linetype="dashed",size=1) +
+geom_vline(xintercept=qnorm(1-(5e-4)/2), colour="darkred", linetype="dashed",size=1) + geom_vline(xintercept=-qnorm(1-(5e-4)/2), colour="darkred", linetype="dashed",size=1) + geom_hline(yintercept=0) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face="bold", colour=col[3]),
+  )
+```
+
+
+```{r, echo=FALSE, out.width = '80%'}
+knitr::include_graphics("images/T2D1_z_bias_sig.png")
+```
+
+In **T2D GWAS 2**, we find that out of the 76 significant SNPs at `5e-8`, all 76 of these SNPs have an association estimate which is more extreme in the discovery GWAS than in the replication. We find that 12 SNPs have *significantly* more extreme association estimates in the discovery GWAS.  
+
+
+```{r, echo=FALSE}
+summary_data_T2D_2 <-  read.table('data/summary_data_T2D_2.txt',header=TRUE)
+summary_data_T2D_2$beta <- log(summary_data_T2D_2$beta)
+summary_data_T2D_2$beta_rep <- log(summary_data_T2D_2$beta_rep)
+```
+
+```{r, echo=FALSE, eval=FALSE}
+out <- summary_data_T2D_2
+out$bias <- out$beta - out$beta_rep
+out$z <- out$beta/out$se
+subout <- out[(abs(out$beta) > (abs(out$beta_rep) + 1.96*out$se)) & (abs(out$beta/out$se) > qnorm(1-(5e-4)/2)),]
+ggplot(out,aes(x=z,y=bias)) + geom_point(size=1) + geom_point(data=subout, 
+             aes(x=z,y=bias), 
+             color='navy',
+             size=1) + xlab("z") +
+  ylab("bias") + ggtitle("T2D GWAS 2") +  theme_classic() + geom_vline(xintercept=qnorm(1-(5e-8)/2), colour="red", linetype="dashed",size=1) + geom_vline(xintercept=-qnorm(1-(5e-8)/2), colour="red", linetype="dashed",size=1) +
+geom_vline(xintercept=qnorm(1-(5e-4)/2), colour="darkred", linetype="dashed",size=1) + geom_vline(xintercept=-qnorm(1-(5e-4)/2), colour="darkred", linetype="dashed",size=1) + geom_hline(yintercept=0) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face="bold", colour=col[4]),
+  )
+```
+
+```{r, echo=FALSE, out.width = '80%'}
+knitr::include_graphics("images/T2D2_z_bias_sig.png")
+```
+
+
+
+The plot of **T2D GWAS 1** is a certain cause for further investigation. We see that most significant SNPs have association estimates which are less in the discovery GWAS than in the replication GWAS. This observation is precisely the opposite of what we would anticipate. *We suspect that again LD may be having some effect here?* 
+
+We find there to be 29 SNPs which are in both sets of significant SNPs at the `5e-8` threshold, while there are 87 SNPs in both sets at the `5e-4` threshold.
+
+Similar to above, we now construct two Manhattan-style plots, in which `position` is plotted against `abs(z)` for all SNPs, grouped by chromosome. Points in <span style="color: darkred;"> dark red </span> represent SNPs which are also significant at the `5e-8` threshold in the corresponding replication GWAS.  
+
+
+```{r, echo=FALSE, eval=FALSE}
+summary_data <- dplyr::arrange(summary_data_T2D_1,dplyr::desc(abs(summary_data_T2D_1$beta/summary_data_T2D_1$se)))
+z <- summary_data$beta/summary_data$se
+p_val <- 2*(1-stats::pnorm(abs(z)))
+summary_data <- cbind(summary_data, z, p_val)
+summary_data_sig_T2D_1 <- summary_data[summary_data$p_val<5e-8,]
+summary_data_sig_T2D_1_a <- summary_data[summary_data$p_val<5e-4,]
+## 5e-8: 31 sig SNPs
+## 5e-4: 5832 sig SNPs
+summary_data <- dplyr::arrange(summary_data_T2D_2,dplyr::desc(abs(summary_data_T2D_2$beta/summary_data_T2D_2$se)))
+z <- summary_data$beta/summary_data$se
+p_val <- 2*(1-stats::pnorm(abs(z)))
+summary_data <- cbind(summary_data, z, p_val)
+summary_data_sig_T2D_2 <- summary_data[summary_data$p_val<5e-8,]
+summary_data_sig_T2D_2_a <- summary_data[summary_data$p_val<5e-4,]
+## 5e-8: 76 sig SNPs
+## 5e-4: 5507 sig SNPs
+overlap_T2D_sig_5e_8 <- intersect(summary_data_sig_T2D_1$rsid, summary_data_sig_T2D_2$rsid)
+overlap_T2D_sig_5e_4 <- intersect(summary_data_sig_T2D_1_a$rsid, summary_data_sig_T2D_2_a$rsid)
+## 5e-8: 29 overlapping sig SNPs 
+## 5e-4: 87 overlapping sig SNPs
+```
+
+```{r, echo=FALSE, eval=FALSE}
+## T2D 1
+z <- summary_data_T2D_1$beta/summary_data_T2D_1$se
+p_val <- 2*(1-stats::pnorm(abs(z)))
+log_p_val <- -log10(p_val)
+summary_data_T2D_1 <- cbind(summary_data_T2D_1, z, p_val, log_p_val)
+summary_data_sig_T2D_1 <- summary_data_T2D_1[summary_data_T2D_1$p_val < 5e-8,]
+subout <- summary_data_sig_T2D_1[summary_data_sig_T2D_1$rsid %in% overlap_T2D_sig_5e_8,]
+
+ggplot(summary_data_T2D_1, aes(x=pos,y=abs(z))) + geom_point(size=1) + geom_point(data=subout, 
+             aes(x=pos,y=abs(z)), 
+             color='darkred',
+             size=1) + facet_wrap(~chr, nrow=1) + labs(x="position", y="|z|",title="T2D GWAS 1", subtitle="by chromosome") + geom_hline(yintercept=qnorm(1-(5e-8)/2)) + 
+  theme(
+    plot.title = element_text(hjust = 0.5, face="bold",color=col[3]),axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(), plot.subtitle = element_text(hjust = 0.5, face="italic")
+  )
+
+## T2D 2
+z <- summary_data_T2D_2$beta/summary_data_T2D_2$se
+p_val <- 2*(1-stats::pnorm(abs(z)))
+log_p_val <- -log10(p_val)
+summary_data_T2D_2 <- cbind(summary_data_T2D_2, z, p_val, log_p_val)
+summary_data_sig_T2D_2 <- summary_data_T2D_2[summary_data_T2D_2$p_val < 5e-8,]
+subout <- summary_data_sig_T2D_2[summary_data_sig_T2D_2$rsid %in% overlap_T2D_sig_5e_8,]
+ggplot(summary_data_T2D_2, aes(x=pos,y=abs(z))) + geom_point(size=1) + geom_point(data=subout, 
+             aes(x=pos,y=abs(z)), 
+             color='darkred',
+             size=1) + facet_wrap(~chr, nrow=1) + labs(x="position", y="|z|",title="T2D GWAS 2", subtitle="by chromosome") + geom_hline(yintercept=qnorm(1-(5e-8)/2)) + 
+  theme(
+    plot.title = element_text(hjust = 0.5, face="bold",color=col[4]),axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(), plot.subtitle = element_text(hjust = 0.5, face="italic")
+  )
+```
+
+
+
+```{r, echo=FALSE, out.width = '80%'}
+knitr::include_graphics("images/T2D1_pos_abs(z)_full.png")
+knitr::include_graphics("images/T2D2_pos_abs(z)_full.png")
+```
+
+
+<br>
+
+
+## Evaluating methods 
+
+As the main aim of our study is to evaluate Winner's Curse correction methods, we apply these methods to the association estimates in all of our discovery GWASs to obtain adjusted association estimates and make comparisons based on the fact that *unbiased* association estimates have been obtained in the corresponding replication GWAS. 
+
+Thus, the key question which we intend to attempt to answer is as follows:   
+
+*Which method produces less biased estimates, i.e. estimates closest to those which would have been obtained in a replication study of similar size?* 
+
+Similar to what has been executed in relation to the simulation study, it is possible for evaluation to take place by considering mean squared error (mse). In the simulation study, we computed the following measurement over all $n$ significant SNPs: $$\frac{1}{n} \sum^n_{i=1} (\hat\beta_{\text{disc,adj},i} - \beta_i)^2,$$ however, due to the fact we are using real data sets, we don't know the true effect size, $\beta_{i}$ for each significant SNP. Therefore, in this instance, we will apply the six different methods to the discovery GWAS and subsequently make use of the replication GWAS association estimates to assist us. We will evaluate the methods based on the following measurement over $n$ significant SNPs: $$\frac{1}{n} \sum^n_{i=1} (\hat\beta_{\text{disc,adj},i} - \hat\beta_{\text{rep},i})^2 - \frac{1}{n} \sum^n_{i=1} (\text{se}_{\text{disc},i})^2,$$or alternatively: $$\sum^n_{i=1} (\hat\beta_{\text{disc,adj},i} - \hat\beta_{\text{rep},i})^2 - \sum^n_{i=1} (\text{se}_{\text{disc},i})^2.$$ We will refer to the first measurement as `mse` and to the second as `mse.n`.
+
+
+### BMI 1
+
+We begin by applying the methods and use a threshold of `5e-8` in order to classify significant SNPs. For **BMI GWAS 1**, we obtain the following adjusted association estimates for the top 6 significant SNPs and the SNPs in positions 1441-1446 based on significance.
+
+
+```{r, echo=FALSE}
+
+summary_stats <- summary_data_bmi_1[,3:5]
+
+out_CL <- conditional_likelihood(summary_data = summary_stats, alpha = 5e-8) 
+out_EB <- empirical_bayes(summary_data = summary_stats)
+out_FIQT <- FDR_IQT(summary_data = summary_stats)
+out_BR_bmi1 <- BR_ss(summary_data = summary_stats)
+
+out_EB_sig <- out_EB[2*(1-pnorm(abs(out_EB$beta/out_EB$se))) < 5e-8,]
+out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-8,]
+out_BR_ss_sig <- out_BR_bmi1[2*(1-pnorm(abs(out_BR_bmi1$beta/out_BR_bmi1$se))) < 5e-8,]
+
+results <- data.frame(out_CL, "beta_EB" = out_EB_sig$beta_EB, "beta_FIQT" = out_FIQT_sig$beta_FIQT, "beta_boot" = out_BR_ss_sig$beta_BR_ss)
+
+results <- results %>% 
+ mutate_if(is.numeric, round, digits=5)
+```
+
+```{r}
+
+print(results[1:6,], row.names = FALSE)
+
+```
+
+
+It can be seen here that the top 6 significant SNPs do not get adjusted by the conditional likelihood methods or FDR IQT. This is what we would expect given that FDR IQT cannot adjust the effect sizes of any SNPs which have a $p$-value less than `1e-15`. However, we will attempt to adapt this method later so that adjustments can be made to these SNPs with extremely low $p$-values. We are also not surprised to see this behaviour with the conditional likelihood methods as it is known that they tend to make much greater adjustments to those SNPs which fall very close to the threshold while making little or no correction to SNPs with very large $z$-scores. 
+
+
+```{r}
+
+print(results[1441:1446,], row.names=FALSE)
+
+```
+
+In this set of results, we notice that the empirical Bayes method has failed to decrease the effect sizes of all SNPs. This is most likely due to the way in which the distribution of the data is being modelled but we will conduct a more detailed investigation into this later. 
+
+
+Bearing these observations in mind, we compute `mse` and `mse.n` and obtain the following: 
+
+```{r, echo=FALSE}
+summary_data_bmi_1 <- dplyr::arrange(summary_data_bmi_1,dplyr::desc(abs(summary_data_bmi_1$beta/summary_data_bmi_1$se)))
+z <- summary_data_bmi_1$beta/summary_data_bmi_1$se
+p_val <- 2*(1-stats::pnorm(abs(z)))
+summary_data_bmi_1 <- cbind(summary_data_bmi_1, z, p_val)
+summary_data_sig_bmi_1 <- summary_data_bmi_1[summary_data_bmi_1$p_val<5e-8,]
+true_beta <- summary_data_sig_bmi_1$beta_rep ## need this to be in the same order as out_EB etc.!
+
+mse_BMI1 <- data.frame(naive = mean((true_beta - out_CL$beta)^2) - mean(out_EB_sig$se^2), beta.cl1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2),  beta.cl2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2),  beta.cl3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), beta_EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), beta_boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2))
+
+mse.n_BMI1 <- data.frame(naive = sum((true_beta - out_CL$beta)^2) - sum(out_EB_sig$se^2), beta.cl1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2),  beta.cl2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2),  beta.cl3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), beta_EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2))
+
+```
+
+
+```{r}
+mse_BMI1
+
+mse.n_BMI1
+```
+
+
+Here, it seems that it is in fact the bootstrap method which performs the best, obtaining the smallest values. However, the empirical Bayes approach and FDR IQT also have values which are less than that of the `naive` approach, i.e. using non-adjusted assoication estimates. This is an encouraging observation. That said, it is concerning that all of the three conditional likelihood methods demonstrate poor performance, when evaluated with this metric. We perhaps would have hoped to see lower values for the empirical Bayes method - this observation provides motivation to attempt improving the method, making it more suitable for application to real data. 
+
+We also have a look at computing these same quantities when the threshold is changed to a less stringent one of `5e-4`. Here, we obtain the following results: 
+
+```{r, echo=FALSE}
+out_EB_sig <- out_EB[2*(1-pnorm(abs(out_EB$beta/out_EB$se))) < 5e-4,]
+out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-4,]
+out_BR_ss_sig <- out_BR_bmi1[2*(1-pnorm(abs(out_BR_bmi1$beta/out_BR_bmi1$se))) < 5e-4,]
+
+summary_data_sig2 <- summary_data_bmi_1[summary_data_bmi_1$p_val<5e-4,]
+true_beta2 <- summary_data_sig2$beta_rep
+
+out_CL2 <- conditional_likelihood(summary_data = summary_stats, alpha = 5e-4)
+
+mse_BMI1_5e_4 <- data.frame(naive = mean((true_beta2 - out_CL2$beta)^2) - mean(out_CL2$se^2), beta.cl1 = mean((true_beta2 - out_CL2$beta.cl1)^2) - mean(out_CL2$se^2),  beta.cl2 = mean((true_beta2 - out_CL2$beta.cl2)^2) - mean(out_CL2$se^2),  beta.cl3 = mean((true_beta2 - out_CL2$beta.cl3)^2) - mean(out_CL2$se^2), beta_EB = mean((true_beta2 - out_EB_sig$beta_EB)^2) - mean(out_CL2$se^2), beta_FIQT = mean((true_beta2 - out_FIQT_sig$beta_FIQT)^2) - mean(out_CL2$se^2), beta_BR_ss = mean((true_beta2 - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_CL2$se^2))
+
+mse.n_BMI1_5e_4 <- data.frame(naive = sum((true_beta2 - out_CL2$beta)^2) - sum(out_EB_sig$se^2), beta.cl1 = sum((true_beta2 - out_CL2$beta.cl1)^2) - sum(out_EB_sig$se^2),  beta.cl2 = sum((true_beta2 - out_CL2$beta.cl2)^2) - sum(out_EB_sig$se^2),  beta.cl3 = sum((true_beta2 - out_CL2$beta.cl3)^2) - sum(out_EB_sig$se^2), beta_EB = sum((true_beta2 - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_FIQT = sum((true_beta2 - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_boot = sum((true_beta2 - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2))
+```
+
+```{r}
+mse_BMI1_5e_4
+mse.n_BMI1_5e_4
+```
+
+
+
+We witness a similar pattern to that above but with all methods having lower values than that of the `naive` approach. It is the empirical Bayes method which performs the best in this instance.
+
+
+
+### BMI 2
+
+We repeat the above process for **BMI GWAS 2**. Here, we keep in mind what we observed in our $z$ vs $\text{bias}$ plot for **BMI GWAS 2** - we saw that for the most significant SNPs to the right of the plot, their association estimates in the replication GWAS were in fact *larger* than in the discovery GWAS. Thus, it is clear that considering the evaluation metrics that we are using, any method which reduces the association estimates of these SNPs would be seen to perform poorly compared to the `naive` approach for these particular SNPs. 
+
+
+
+```{r, echo=FALSE}
+summary_stats <- summary_data_bmi_2[,3:5]
+
+out_CL <- conditional_likelihood(summary_data = summary_stats, alpha = 5e-8) 
+out_EB <- empirical_bayes(summary_data = summary_stats)
+out_FIQT <- FDR_IQT(summary_data = summary_stats)
+out_BR_bmi2 <- BR_ss(summary_data = summary_stats)
+
+out_EB_sig <- out_EB[2*(1-pnorm(abs(out_EB$beta/out_EB$se))) < 5e-8,]
+out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-8,]
+out_BR_ss_sig <- out_BR_bmi2[2*(1-pnorm(abs(out_BR_bmi2$beta/out_BR_bmi2$se))) < 5e-8,]
+
+results <- data.frame(out_CL, "beta_EB" = out_EB_sig$beta_EB, "beta_FIQT" = out_FIQT_sig$beta_FIQT, "beta_boot" = out_BR_ss_sig$beta_BR_ss)
+
+results <- results %>% 
+ mutate_if(is.numeric, round, digits=5)
+```
+
+```{r}
+print(results[1:6,], row.names = FALSE)
+```
+
+Similar to above, we see that the conditional likelihood methods and FDR IQT do not adjust the estimated effect sizes of the most significant SNPs.
+
+
+
+```{r}
+
+print(results[445:450,], row.names=FALSE)
+```
+
+For this set of SNPs, we notice that only the bootstrap method makes adjustments to the association estimates. These SNPs still have large enough $z$-scores and small enough $p$-values to expect that the conditional likelihood methods and FDR IQT would make little or no adjustments. However, it is the failure of the empirical Bayes approach to adjust the estimated effect sizes that our attention is drawn to. We hypothesize that it is an issue with the manner in which the method models the distribution that is responsible for this. 
+
+
+We compute `mse` and `mse.n`: 
+
+```{r, echo=FALSE}
+summary_data_bmi_2 <- dplyr::arrange(summary_data_bmi_2,dplyr::desc(abs(summary_data_bmi_2$beta/summary_data_bmi_2$se)))
+z <- summary_data_bmi_2$beta/summary_data_bmi_2$se
+p_val <- 2*(1-stats::pnorm(abs(z)))
+summary_data_bmi_2 <- cbind(summary_data_bmi_2, z, p_val)
+summary_data_sig_bmi_2 <- summary_data_bmi_2[summary_data_bmi_2$p_val<5e-8,]
+true_beta <- summary_data_sig_bmi_2$beta_rep ## need this to be in the same order as out_EB etc.!
+
+mse_BMI2 <- data.frame(naive = mean((true_beta - out_CL$beta)^2) - mean(out_EB_sig$se^2), beta.cl1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2),  beta.cl2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2),  beta.cl3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), beta_EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), beta_boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2))
+
+mse.n_BMI2 <- data.frame(naive = sum((true_beta - out_CL$beta)^2) - sum(out_EB_sig$se^2), beta.cl1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2),  beta.cl2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2),  beta.cl3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), beta_EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2))
+
+```
+
+
+```{r}
+mse_BMI2
+
+mse.n_BMI2
+```
+
+Here, it is only the first conditional likelihood method that has values larger than the `naive` approach while FDR IQT is seen to perform the best overall. 
+
+
+We repeat using the larger threshold of `5e-4`:
+
+```{r, echo=FALSE}
+out_EB_sig <- out_EB[2*(1-pnorm(abs(out_EB$beta/out_EB$se))) < 5e-4,]
+out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-4,]
+out_BR_ss_sig <- out_BR_bmi2[2*(1-pnorm(abs(out_BR_bmi2$beta/out_BR_bmi2$se))) < 5e-4,]
+
+summary_data_sig2 <- summary_data_bmi_2[summary_data_bmi_2$p_val<5e-4,]
+true_beta2 <- summary_data_sig2$beta_rep
+
+out_CL2 <- conditional_likelihood(summary_data = summary_stats, alpha = 5e-4)
+
+mse_BMI2_5e_4 <- data.frame(naive = mean((true_beta2 - out_CL2$beta)^2) - mean(out_CL2$se^2), beta.cl1 = mean((true_beta2 - out_CL2$beta.cl1)^2) - mean(out_CL2$se^2),  beta.cl2 = mean((true_beta2 - out_CL2$beta.cl2)^2) - mean(out_CL2$se^2),  beta.cl3 = mean((true_beta2 - out_CL2$beta.cl3)^2) - mean(out_CL2$se^2), beta_EB = mean((true_beta2 - out_EB_sig$beta_EB)^2) - mean(out_CL2$se^2), beta_FIQT = mean((true_beta2 - out_FIQT_sig$beta_FIQT)^2) - mean(out_CL2$se^2), beta_BR_ss = mean((true_beta2 - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_CL2$se^2))
+
+mse.n_BMI2_5e_4 <- data.frame(naive = sum((true_beta2 - out_CL2$beta)^2) - sum(out_EB_sig$se^2), beta.cl1 = sum((true_beta2 - out_CL2$beta.cl1)^2) - sum(out_EB_sig$se^2),  beta.cl2 = sum((true_beta2 - out_CL2$beta.cl2)^2) - sum(out_EB_sig$se^2),  beta.cl3 = sum((true_beta2 - out_CL2$beta.cl3)^2) - sum(out_EB_sig$se^2), beta_EB = sum((true_beta2 - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_FIQT = sum((true_beta2 - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_boot = sum((true_beta2 - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2))
+```
+
+```{r}
+mse_BMI2_5e_4
+mse.n_BMI2_5e_4
+```
+
+Again, we witness a similar pattern to above in which all methods perform better than the `naive` approach. It seems that at these less stringent thresholds, the empirical Bayes method continues to prove its ability in reducing the association estimates to values that are close to what would have been obtained in a replication GWAS of similar size. 
+
+
+### T2D 1
+
+Now we turn to our first T2D GWAS. In the case of T2D, we see a much smaller number of SNPs passing the genome-wide significance threshold of `5e-8`. In a similar manner to **BMI GWAS 2**, we must be cautious here in our evaluation as we noticed that the majority of the significant SNPs here have *greater* association estimates in the replication GWAS than in the discovery GWAS. Therefore, we anticipate that none of these methods will perform as well as the `naive` approach when the threshold of `5e-8` is used.
+
+We obtain the following adjusted association estimates for the top 6 significant SNPs.
+
+```{r, echo=FALSE}
+
+summary_stats <- summary_data_T2D_1[,3:5]
+
+out_CL <- conditional_likelihood(summary_data = summary_stats, alpha = 5e-8) 
+out_EB <- empirical_bayes(summary_data = summary_stats)
+out_FIQT <- FDR_IQT(summary_data = summary_stats)
+out_BR_T2D1 <- BR_ss(summary_data = summary_stats)
+
+out_EB_sig <- out_EB[2*(1-pnorm(abs(out_EB$beta/out_EB$se))) < 5e-8,]
+out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-8,]
+out_BR_ss_sig <- out_BR_T2D1[2*(1-pnorm(abs(out_BR_T2D1$beta/out_BR_T2D1$se))) < 5e-8,]
+
+results <- data.frame(out_CL, "beta_EB" = out_EB_sig$beta_EB, "beta_FIQT" = out_FIQT_sig$beta_FIQT, "beta_boot" = out_BR_ss_sig$beta_BR_ss)
+
+results <- results %>% 
+ mutate_if(is.numeric, round, digits=5)
+```
+
+```{r}
+print(results[1:6,], row.names = FALSE)
+```
+
+In this case, we see that every method except FDR IQT reduces the estimated effect sizes of the top significant SNPs. 
+
+ 
+
+We compute `mse` and `mse.n` and obtain the following: 
+
+```{r, echo=FALSE}
+summary_data_T2D_1 <- dplyr::arrange(summary_data_T2D_1,dplyr::desc(abs(summary_data_T2D_1$beta/summary_data_T2D_1$se)))
+z <- summary_data_T2D_1$beta/summary_data_T2D_1$se
+p_val <- 2*(1-stats::pnorm(abs(z)))
+summary_data_T2D_1 <- cbind(summary_data_T2D_1, z, p_val)
+summary_data_sig_T2D_1 <- summary_data_T2D_1[summary_data_T2D_1$p_val<5e-8,]
+true_beta <- summary_data_sig_T2D_1$beta_rep ## need this to be in the same order as out_EB etc.!
+
+mse_T2D1 <- data.frame(naive = mean((true_beta - out_CL$beta)^2) - mean(out_EB_sig$se^2), beta.cl1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2),  beta.cl2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2),  beta.cl3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), beta_EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), beta_boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2))
+
+mse.n_T2D1 <- data.frame(naive = sum((true_beta - out_CL$beta)^2) - sum(out_EB_sig$se^2), beta.cl1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2),  beta.cl2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2),  beta.cl3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), beta_EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2))
+
+```
+
+
+```{r}
+mse_T2D1
+
+mse.n_T2D1
+```
+
+
+As expected, the values for all methods are larger than that of the `naive` approach. Interestingly, it the is the first conditional likelihood method which has the lowest value of all methods. However, as these metrics are only being evaluated over 31 significant SNPs, most of which have *larger* association estimates in the replication GWAS, we will not place much emphasis on this set of results.
+
+We now consider using a threshold of `5e-4`:
+
+```{r, echo=FALSE}
+out_EB_sig <- out_EB[2*(1-pnorm(abs(out_EB$beta/out_EB$se))) < 5e-4,]
+out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-4,]
+out_BR_ss_sig <- out_BR_T2D1[2*(1-pnorm(abs(out_BR_T2D1$beta/out_BR_T2D1$se))) < 5e-4,]
+
+summary_data_sig2 <- summary_data_T2D_1[summary_data_T2D_1$p_val<5e-4,]
+true_beta2 <- summary_data_sig2$beta_rep
+
+out_CL2 <- conditional_likelihood(summary_data = summary_stats, alpha = 5e-4)
+
+mse_T2D1_5e_4 <- data.frame(naive = mean((true_beta2 - out_CL2$beta)^2) - mean(out_CL2$se^2), beta.cl1 = mean((true_beta2 - out_CL2$beta.cl1)^2) - mean(out_CL2$se^2),  beta.cl2 = mean((true_beta2 - out_CL2$beta.cl2)^2) - mean(out_CL2$se^2),  beta.cl3 = mean((true_beta2 - out_CL2$beta.cl3)^2) - mean(out_CL2$se^2), beta_EB = mean((true_beta2 - out_EB_sig$beta_EB)^2) - mean(out_CL2$se^2), beta_FIQT = mean((true_beta2 - out_FIQT_sig$beta_FIQT)^2) - mean(out_CL2$se^2), beta_BR_ss = mean((true_beta2 - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_CL2$se^2))
+
+mse.n_T2D1_5e_4 <- data.frame(naive = sum((true_beta2 - out_CL2$beta)^2) - sum(out_EB_sig$se^2), beta.cl1 = sum((true_beta2 - out_CL2$beta.cl1)^2) - sum(out_EB_sig$se^2),  beta.cl2 = sum((true_beta2 - out_CL2$beta.cl2)^2) - sum(out_EB_sig$se^2),  beta.cl3 = sum((true_beta2 - out_CL2$beta.cl3)^2) - sum(out_EB_sig$se^2), beta_EB = sum((true_beta2 - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_FIQT = sum((true_beta2 - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_boot = sum((true_beta2 - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2))
+```
+
+```{r}
+mse_T2D1_5e_4
+mse.n_T2D1_5e_4
+```
+
+
+These results can be understood to be much more appropriate than the previous set for comparing our Winner's Curse correction methods. We see that all methods now have values less than that of the `naive` approach with the empirical Bayes approach and FDR IQT having the smallest values. Ideally, we would anticipate that empirical Bayes would perform better - perhaps making a modification to the method may allow it to make better adjustments to the estimated effect sizes of these significant SNPs? We will investigate this further later. 
+
+
+
+### T2D 2
+
+
+For **T2D GWAS 2**, we obtain the following adjusted association estimates for the top 6 significant SNPs.
+
+
+```{r, echo=FALSE}
+
+summary_stats <- summary_data_T2D_2[,3:5]
+
+out_CL <- conditional_likelihood(summary_data = summary_stats, alpha = 5e-8) 
+out_EB <- empirical_bayes(summary_data = summary_stats)
+out_FIQT <- FDR_IQT(summary_data = summary_stats)
+out_BR_T2D2 <- BR_ss(summary_data = summary_stats)
+
+out_EB_sig <- out_EB[2*(1-pnorm(abs(out_EB$beta/out_EB$se))) < 5e-8,]
+out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-8,]
+out_BR_ss_sig <- out_BR_T2D2[2*(1-pnorm(abs(out_BR_T2D2$beta/out_BR_T2D2$se))) < 5e-8,]
+
+results <- data.frame(out_CL, "beta_EB" = out_EB_sig$beta_EB, "beta_FIQT" = out_FIQT_sig$beta_FIQT, "beta_boot" = out_BR_ss_sig$beta_BR_ss)
+
+results <- results %>% 
+ mutate_if(is.numeric, round, digits=5)
+```
+
+```{r}
+
+print(results[1:6,], row.names = FALSE)
+
+```
+
+Just like above, we see that every method except FDR IQT reduces the estimated effect sizes of the top significant SNPs. 
+ 
+
+
+We compute `mse` and `mse.n`: 
+
+```{r, echo=FALSE}
+summary_data_T2D_2 <- dplyr::arrange(summary_data_T2D_2,dplyr::desc(abs(summary_data_T2D_2$beta/summary_data_T2D_2$se)))
+z <- summary_data_T2D_2$beta/summary_data_T2D_2$se
+p_val <- 2*(1-stats::pnorm(abs(z)))
+summary_data_T2D_2 <- cbind(summary_data_T2D_2, z, p_val)
+summary_data_sig_T2D_2 <- summary_data_T2D_2[summary_data_T2D_2$p_val<5e-8,]
+true_beta <- summary_data_sig_T2D_2$beta_rep ## need this to be in the same order as out_EB etc.!
+
+mse_T2D2 <- data.frame(naive = mean((true_beta - out_CL$beta)^2) - mean(out_EB_sig$se^2), beta.cl1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2),  beta.cl2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2),  beta.cl3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), beta_EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), beta_boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2))
+
+mse.n_T2D2 <- data.frame(naive = sum((true_beta - out_CL$beta)^2) - sum(out_EB_sig$se^2), beta.cl1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2),  beta.cl2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2),  beta.cl3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), beta_EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2))
+
+```
+
+
+```{r}
+mse_T2D2
+
+mse.n_T2D2
+```
+
+
+It is concerning here that the empirical Bayes method has a greater value than the `naive` approach. This certainly warrants further investigation which will take place later. All other methods perform better than the `naive` approach, with the bootstrap method performing the best.  
+ 
+We increase the threshold used to `5e-4`:
+
+```{r, echo=FALSE}
+out_EB_sig <- out_EB[2*(1-pnorm(abs(out_EB$beta/out_EB$se))) < 5e-4,]
+out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-4,]
+out_BR_ss_sig <- out_BR_T2D2[2*(1-pnorm(abs(out_BR_T2D2$beta/out_BR_T2D2$se))) < 5e-4,]
+
+summary_data_sig2 <- summary_data_T2D_2[summary_data_T2D_2$p_val<5e-4,]
+true_beta2 <- summary_data_sig2$beta_rep
+
+out_CL2 <- conditional_likelihood(summary_data = summary_stats, alpha = 5e-4)
+
+mse_T2D2_5e_4 <- data.frame(naive = mean((true_beta2 - out_CL2$beta)^2) - mean(out_CL2$se^2), beta.cl1 = mean((true_beta2 - out_CL2$beta.cl1)^2) - mean(out_CL2$se^2),  beta.cl2 = mean((true_beta2 - out_CL2$beta.cl2)^2) - mean(out_CL2$se^2),  beta.cl3 = mean((true_beta2 - out_CL2$beta.cl3)^2) - mean(out_CL2$se^2), beta_EB = mean((true_beta2 - out_EB_sig$beta_EB)^2) - mean(out_CL2$se^2), beta_FIQT = mean((true_beta2 - out_FIQT_sig$beta_FIQT)^2) - mean(out_CL2$se^2), beta_BR_ss = mean((true_beta2 - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_CL2$se^2))
+
+mse.n_T2D2_5e_4 <- data.frame(naive = sum((true_beta2 - out_CL2$beta)^2) - sum(out_EB_sig$se^2), beta.cl1 = sum((true_beta2 - out_CL2$beta.cl1)^2) - sum(out_EB_sig$se^2),  beta.cl2 = sum((true_beta2 - out_CL2$beta.cl2)^2) - sum(out_EB_sig$se^2),  beta.cl3 = sum((true_beta2 - out_CL2$beta.cl3)^2) - sum(out_EB_sig$se^2), beta_EB = sum((true_beta2 - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_FIQT = sum((true_beta2 - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_boot = sum((true_beta2 - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2))
+```
+
+```{r}
+mse_T2D2_5e_4
+mse.n_T2D2_5e_4
+```
+
+Here, we obtain very similar results to those of **T2D GWAS 1** at the same threshold and thus, they can be interpreted in the same manner.  
+
+
+<br>
+
+
+## Improving methods 
+
+In this section, we investigate why some of the association estimates of significant SNPs are failing to be adjusted upon application of some of the Winner's Curse correction methods. Our results above have motivated us to attempt to understand why certain methods are not performing that well in certain circumstances and to see if improvements can be made so that better adjusted association estimates can be obtained. 
+
+
+### FDR Inverse Quantile Transformation 
+
+With respect to FDR Inverse Quantile Transformation, the explanation as to why we see unadjusted estimates is quite simple. The method definition contains the clause that if a certain SNP has a $p$-value which equates to 0 or indeed a $p$-value less than `1e-15`, then the association estimate of this SNP will not be adjusted. We consider if perhaps there exists a way in which we could obtain adjusted estimates for these SNPs with very small $p$-values or equivalently, very large $z$ and investigate what effect that would have on the method. 
+
+It's possible to prove that for all $z > 0$, the following identity holds: 
+$$P(N(0,1) > z) \le \frac{e^{\frac{-z^2}{2}}}{z\sqrt{2\pi}}$$
+However, $\frac{\frac{e^{\frac{-z^2}{2}}}{z\sqrt{2\pi}}}{P(N(0,1) > z)} \rightarrow 1$ as $z \rightarrow \infty$, and therefore, we can in fact use the following as an approximation to $2 \times P(N(0,1) > |z|)$ for large $z$: 
+$$2 \times \frac{e^{\frac{-|z|^2}{2}}}{|z|\sqrt{2\pi}}$$
+Thus, using the above, we can make the following modification to the FDR Inverse Quantile Transformation method and rewrite the `FDR_IQT` function as: 
+
+```{r}
+## An alternative form of FDR_IQT which ensures adjustments are made to SNPs which have very large z values
+FDR_IQT2 <- function(summary_data, min_pval=1e-15){
+  summary_data <- dplyr::arrange(summary_data,dplyr::desc(abs(summary_data$beta/summary_data$se)))
+  z <- summary_data$beta/summary_data$se
+  p_val <- 2*(1-stats::pnorm(abs(z)))
+  p_val[p_val < min_pval] <- 2*(exp(-abs(z[p_val < min_pval])^2/2)/(abs(z[p_val < min_pval])*sqrt(2*pi)))
+  adj_p <- stats::p.adjust(p_val, method="fdr")
+  adj_z <- stats::qnorm(1-(adj_p/2))
+  adjusted <- data.frame(adj_p,adj_z)
+  zz <- seq(from = 8, to = floor(max(z)) + 1, by = 0.0001)
+  p_vals <- 2*(exp(-abs(zz)^2/2)/(abs(zz)*sqrt(2*pi)))
+  for (i in 1:length(p_val[p_val < min_pval])){
+    if(adjusted$adj_z[i] == Inf){
+       adjusted$adj_z[i] <- zz[which.min(abs(p_vals - c(rep(adjusted$adj_p[i],length(p_vals)))))]
+    }
+  }
+  beta_FIQT <- sign(summary_data$beta)*adjusted$adj_z*summary_data$se
+  summary_data <- cbind(summary_data,beta_FIQT)
+  return(summary_data)
+}
+```
+
+
+This new version of FDR IQT is guaranteed to make adjustments to the estimated effect sizes of all significant SNPs. However, we will show later that this may not actually improve the evaluation metrics for FDR IQT as it can result in an over-reduction of several association estimates. 
+
+
+### Empirical Bayes 
+
+In relation to the empirical Bayes method, the function which executes this method contains a line of code which ensures that each association estimate gets reduced or if the method results in an increase in the estimate, then the association estimate will remain unadjusted. Thus, there must be certain regions in which this method is increasing the association estimates. 
+
+We first consider having a look at the empirical Bayes method in more detail with respect to **BMI GWAS 1**.
+
+
+```{r}
+z <- summary_data_bmi_1$beta/summary_data_bmi_1$se
+bins <- seq(min(z),max(z),length.out=120)
+mids <- (bins[-length(bins)]+bins[-1])/2
+counts <- graphics::hist(z,breaks=bins,plot=F)$counts
+most_extreme <- 10
+boundary_lower <- sort(z)[most_extreme]
+boundary_upper <- sort(z,decreasing=TRUE)[most_extreme]
+df <- 7
+AIC_vector <- c(rep(0,28))
+for (best_df in 3:30){
+  model <- stats::glm(counts ~ splines::ns(mids,knots = (seq(from=boundary_lower,to=boundary_upper,length=best_df+1)[2:best_df]), Boundary.knots=c(boundary_lower,boundary_upper)),stats::poisson,weights=rep(10^-50,length(counts)))
+    minus2loglike <- 10^50*(model$deviance)
+    AIC_vector[best_df-2] <- minus2loglike + 2*(best_df-2)
+  }
+df <- 2 + which.min(AIC_vector)
+
+f <- stats::glm(counts ~ splines::ns(mids,knots = (seq(from=boundary_lower,to=boundary_upper,length=df+1)[2:df]), Boundary.knots=c(boundary_lower,boundary_upper)),stats::poisson,weight=rep(10^-50,length(counts)))$fit
+f[f==0] <- min(f[f>0])
+log_f <- as.vector(log(f))
+
+## plot log_f
+plot(log_f, main="BMI GWAS 1", col.main=col[1]) 
+```
+
+We expect this graph of `log_f` to be smooth. However, it demonstrates particularly unsmooth behaviour in the tails. 
+
+
+```{r}
+diff <- diff(log_f)/diff(mids)
+
+## plot diff
+plot(diff, main="BMI GWAS 1", col.main=col[1]) + abline(h=0)
+```
+
+In the above plot, we generally expect that `diff` would be positive to the left and then become negative. However, this doesn't seem to be the case here at all. This serious issue is then translated into the adjustments made to the association estimates and is responsible for the method failing to adjust certain estimates. 
+
+
+We obtain `diff` plots for the other GWASs as follows: 
+
+```{r, echo=FALSE}
+z <- summary_data_bmi_2$beta/summary_data_bmi_2$se
+bins <- seq(min(z),max(z),length.out=120)
+mids <- (bins[-length(bins)]+bins[-1])/2
+counts <- graphics::hist(z,breaks=bins,plot=F)$counts
+most_extreme <- 10
+boundary_lower <- sort(z)[most_extreme]
+boundary_upper <- sort(z,decreasing=TRUE)[most_extreme]
+df <- 7
+AIC_vector <- c(rep(0,28))
+for (best_df in 3:30){
+  model <- stats::glm(counts ~ splines::ns(mids,knots = (seq(from=boundary_lower,to=boundary_upper,length=best_df+1)[2:best_df]), Boundary.knots=c(boundary_lower,boundary_upper)),stats::poisson,weights=rep(10^-50,length(counts)))
+    minus2loglike <- 10^50*(model$deviance)
+    AIC_vector[best_df-2] <- minus2loglike + 2*(best_df-2)
+  }
+df <- 2 + which.min(AIC_vector)
+
+f <- stats::glm(counts ~ splines::ns(mids,knots = (seq(from=boundary_lower,to=boundary_upper,length=df+1)[2:df]), Boundary.knots=c(boundary_lower,boundary_upper)),stats::poisson,weight=rep(10^-50,length(counts)))$fit
+f[f==0] <- min(f[f>0])
+log_f <- as.vector(log(f))
+
+diff_bmi_2 <- diff(log_f)/diff(mids)
+
+
+z <- summary_data_T2D_1$beta/summary_data_T2D_1$se
+bins <- seq(min(z),max(z),length.out=120)
+mids <- (bins[-length(bins)]+bins[-1])/2
+counts <- graphics::hist(z,breaks=bins,plot=F)$counts
+most_extreme <- 10
+boundary_lower <- sort(z)[most_extreme]
+boundary_upper <- sort(z,decreasing=TRUE)[most_extreme]
+df <- 7
+AIC_vector <- c(rep(0,28))
+for (best_df in 3:30){
+  model <- stats::glm(counts ~ splines::ns(mids,knots = (seq(from=boundary_lower,to=boundary_upper,length=best_df+1)[2:best_df]), Boundary.knots=c(boundary_lower,boundary_upper)),stats::poisson,weights=rep(10^-50,length(counts)))
+    minus2loglike <- 10^50*(model$deviance)
+    AIC_vector[best_df-2] <- minus2loglike + 2*(best_df-2)
+  }
+df <- 2 + which.min(AIC_vector)
+
+f <- stats::glm(counts ~ splines::ns(mids,knots = (seq(from=boundary_lower,to=boundary_upper,length=df+1)[2:df]), Boundary.knots=c(boundary_lower,boundary_upper)),stats::poisson,weight=rep(10^-50,length(counts)))$fit
+f[f==0] <- min(f[f>0])
+log_f <- as.vector(log(f))
+
+diff_T2D_1 <- diff(log_f)/diff(mids)
+
+
+z <- summary_data_T2D_2$beta/summary_data_T2D_2$se
+bins <- seq(min(z),max(z),length.out=120)
+mids <- (bins[-length(bins)]+bins[-1])/2
+counts <- graphics::hist(z,breaks=bins,plot=F)$counts
+most_extreme <- 10
+boundary_lower <- sort(z)[most_extreme]
+boundary_upper <- sort(z,decreasing=TRUE)[most_extreme]
+df <- 7
+AIC_vector <- c(rep(0,28))
+for (best_df in 3:30){
+  model <- stats::glm(counts ~ splines::ns(mids,knots = (seq(from=boundary_lower,to=boundary_upper,length=best_df+1)[2:best_df]), Boundary.knots=c(boundary_lower,boundary_upper)),stats::poisson,weights=rep(10^-50,length(counts)))
+    minus2loglike <- 10^50*(model$deviance)
+    AIC_vector[best_df-2] <- minus2loglike + 2*(best_df-2)
+  }
+df <- 2 + which.min(AIC_vector)
+
+f <- stats::glm(counts ~ splines::ns(mids,knots = (seq(from=boundary_lower,to=boundary_upper,length=df+1)[2:df]), Boundary.knots=c(boundary_lower,boundary_upper)),stats::poisson,weight=rep(10^-50,length(counts)))$fit
+f[f==0] <- min(f[f>0])
+log_f <- as.vector(log(f))
+
+diff_T2D_2 <- diff(log_f)/diff(mids)
+
+par(mfrow=c(1,3)) 
+
+## plot diff bmi 2
+plot(diff_bmi_2, main="BMI GWAS 2", col.main = col[2]) + abline(h=0)
+
+## plot diff bmi 2
+plot(diff_T2D_1, main="T2D GWAS 1", col.main = col[3]) + abline(h=0)
+
+## plot diff bmi 2
+plot(diff_T2D_2, main ="T2D GWAS 2", col.main = col[4]) + abline(h=0)
+
+```
+
+
+We see that these plots show similar 'unsmoothness' as the one obtained for **BMI GWAS 1**. Therefore, we must consider how we can counteract this issue. We look at three possible different ways to do this.
+
+
+#### Shape Constrained Additive Model (SCAM)
+
+ 
+We first examine restricting `f` to be a shape constrained additive model (SCAM). We can do so using the R package `scam` and constructing `f` as shown below. 
+
+
+```{r}
+z <- summary_data_bmi_1$beta/summary_data_bmi_1$se
+bins <- seq(min(z),max(z),length.out=120)
+mids <- (bins[-length(bins)]+bins[-1])/2
+counts <- graphics::hist(z,breaks=bins,plot=F)$counts
+data <- data.frame(counts,mids)
+f1 <- scam(counts[mids >= 0] ~ s(mids[mids >= 0], bs="mpd"), family = poisson(link="log"), data = data)$fit
+f2 <- scam(counts[mids < 0] ~ s(mids[mids < 0], bs="mpi"), family = poisson(link="log"), data = data)$fit
+f <- c(f2,f1)
+log_f <- as.vector(log(f))
+diff <- diff(log_f)/diff(mids)
+plot(diff, main="BMI GWAS 1", col.main=col[1]) + abline(h=0)
+```
+
+
+
+This plot of `diff` is considerably smoother than the previous one above, even though there is evidence of discontinuity which is understandable as can be seen in the code above, we compute `f1` and then `f2`. The argument `bs="mpd"` is added in order to achieve monotone decreasing smooths. The coefficients are reparametrized so that they form a decreasing sequence. A first order difference
+penalty applied to the basis coefficients starting with the second is used for the monotone
+increasing and decreasing cases. Similarly, `bs="mpi"` is used to achieve monotone increasing smooths, in which the coefficients are reparametrized so that they form an increasing sequence.
+
+We investigate what these `diff` plots look like for the other 3 GWASs when a shape constrained additive model has been used. 
+
+```{r, echo=FALSE}
+z <- summary_data_bmi_2$beta/summary_data_bmi_2$se
+bins <- seq(min(z),max(z),length.out=120)
+mids <- (bins[-length(bins)]+bins[-1])/2
+counts <- graphics::hist(z,breaks=bins,plot=F)$counts
+data <- data.frame(counts,mids)
+f1 <- scam(counts[mids >= 0] ~ s(mids[mids >= 0], bs="mpd"), family = poisson(link="log"), data = data)$fit
+f2 <- scam(counts[mids < 0] ~ s(mids[mids < 0], bs="mpi"), family = poisson(link="log"), data = data)$fit
+f <- c(f2,f1)
+f[f==0] <- min(f[f>0])
+log_f <- as.vector(log(f))
+
+diff_bmi_2 <- diff(log_f)/diff(mids)
+
+
+z <- summary_data_T2D_1$beta/summary_data_T2D_1$se
+bins <- seq(min(z),max(z),length.out=120)
+mids <- (bins[-length(bins)]+bins[-1])/2
+counts <- graphics::hist(z,breaks=bins,plot=F)$counts
+data <- data.frame(counts,mids)
+f1 <- scam(counts[mids >= 0] ~ s(mids[mids >= 0], bs="mpd"), family = poisson(link="log"), data = data)$fit
+f2 <- scam(counts[mids < 0] ~ s(mids[mids < 0], bs="mpi"), family = poisson(link="log"), data = data)$fit
+f <- c(f2,f1)
+f[f==0] <- min(f[f>0])
+log_f <- as.vector(log(f))
+
+diff_T2D_1 <- diff(log_f)/diff(mids)
+
+
+z <- summary_data_T2D_2$beta/summary_data_T2D_2$se
+bins <- seq(min(z),max(z),length.out=120)
+mids <- (bins[-length(bins)]+bins[-1])/2
+counts <- graphics::hist(z,breaks=bins,plot=F)$counts
+data <- data.frame(counts,mids)
+f1 <- scam(counts[mids >= 0] ~ s(mids[mids >= 0], bs="mpd"), family = poisson(link="log"), data = data)$fit
+f2 <- scam(counts[mids < 0] ~ s(mids[mids < 0], bs="mpi"), family = poisson(link="log"), data = data)$fit
+f <- c(f2,f1)
+f[f==0] <- min(f[f>0])
+log_f <- as.vector(log(f))
+
+diff_T2D_2 <- diff(log_f)/diff(mids)
+
+par(mfrow=c(1,3)) 
+
+## plot diff bmi 2
+plot(diff_bmi_2, main="BMI GWAS 2", col.main = col[2]) + abline(h=0)
+
+## plot diff bmi 2
+plot(diff_T2D_1, main="T2D GWAS 1", col.main = col[3]) + abline(h=0)
+
+## plot diff bmi 2
+plot(diff_T2D_2, main ="T2D GWAS 2", col.main = col[4]) + abline(h=0)
+
+```
+
+We note that these plots show similar improvements to the first one above with respect to smoothness. However, discontinuities in the middle are evident in all three plots. 
+
+We define a new function, namely `empirical_bayes_scam`, which implements the empirical Bayes method in which a shape constrained additive model is employed. 
+
+```{r, echo=FALSE}
+## Scam for EB with default choice of k 
+empirical_bayes_scam <- function(summary_data){
+  z <- summary_data$beta/summary_data$se
+  bins <- seq(min(z),max(z),length.out=120)
+  mids <- (bins[-length(bins)]+bins[-1])/2
+  counts <- graphics::hist(z,breaks=bins,plot=F)$counts
+  data <- data.frame(counts,mids)
+
+  f1 <- scam(counts[mids >= 0] ~ s(mids[mids >= 0], bs="mpd"), family = poisson(link="log"), data = data)$fit
+ f2 <- scam(counts[mids < 0] ~ s(mids[mids < 0], bs="mpi"), family = poisson(link="log"), data = data)$fit
+  
+  f <- c(f2,f1)
+  f[f==0] <- min(f[f>0])
+  log_f <- as.vector(log(f))
+  diff <- diff(log_f)/diff(mids)
+  mids2 <- (mids[-length(mids)]+mids[-1])/2
+
+  diff_interpol <- stats::approx(mids2,diff,mids,rule=2,ties=mean)$y
+  mids_est <- c(rep(0,length(mids)))
+  mids_est[mids>0] <- pmax(0, mids[mids>0] + diff_interpol[mids>0])
+  mids_est[mids<0] <- pmin(0, mids[mids<0] + diff_interpol[mids<0])
+  z_hat <- stats::approx(mids,mids_est,z,rule=1,ties=mean)$y
+  z_hat[is.na(z_hat) & z > 0] <-  z[is.na(z_hat) & z > 0] +   diff_interpol[length(diff_interpol)]
+  z_hat[is.na(z_hat) & z < 0] <-  z[is.na(z_hat) & z < 0] + diff_interpol[1]
+  z_hat <- sign(z)*pmin(abs(z),abs(z_hat))
+  beta_EB <- z_hat*summary_data$se
+  summary_data <- cbind(summary_data,beta_EB)
+  summary_data <- dplyr::arrange(summary_data,dplyr::desc(abs(summary_data$beta/summary_data$se)))
+  return(summary_data)
+}
+```
+
+
+
+
+
+#### Use of LD-pruned set of SNPs
+
+The next improvement we chose to investigate was to use an LD-pruned set of SNPs to establish our empirical Bayes rule, or equivalently, model the density of $z$-scores, and subsequently, make adjustments to all SNPs based on this. 
+
+Due to time constraints we have only considered **BMI GWAS 1** here. The LD-pruned set of SNPs were produced using `linkdis_bmiA.sh`. Here, a window size of 50, step size of 5 and $R^2$ threshold of 0.5 were specified. This provided us with a total of 1,589,295 SNPs that are in approximate linkage equilibrium with each other.
+
+
+```{r, warning=FALSE}
+pruned_SNPs_bmi_1 <- read.table('data/pruned_SNPs_bmi_1.txt',header=TRUE)
+summary_data_sub <- summary_data_bmi_1[summary_data_bmi_1$rsid %in% pruned_SNPs_bmi_1$V1,]
+z <- summary_data_bmi_1$beta/summary_data_bmi_1$se
+z_sub <- summary_data_sub$beta/summary_data_sub$se
+bins <- seq(min(z_sub),max(z_sub),length.out=120) ## using z_sub - set of pruned SNPs
+mids <- (bins[-length(bins)]+bins[-1])/2
+counts <- graphics::hist(z_sub,breaks=bins,plot=F)$counts
+most_extreme <- 10  
+boundary_lower <- sort(z_sub)[most_extreme]
+boundary_upper <- sort(z_sub,decreasing=TRUE)[most_extreme]
+df <- 7
+AIC_vector <- c(rep(0,28))
+for (best_df in 3:30){
+    model <- stats::glm(counts ~ splines::ns(mids,knots = (seq(from=boundary_lower,to=boundary_upper,length=best_df+1)[2:best_df]), Boundary.knots=c(boundary_lower,boundary_upper)),stats::poisson,weights=rep(10^-50,length(counts)))
+    minus2loglike <- 10^50*(model$deviance)
+    AIC_vector[best_df-2] <- minus2loglike + 2*(best_df-2)
+  }
+df <- 2 + which.min(AIC_vector)
+f <- stats::glm(counts ~ splines::ns(mids,knots = (seq(from=boundary_lower,to=boundary_upper,length=df+1)[2:df]), Boundary.knots=c(boundary_lower,boundary_upper)),stats::poisson,weight=rep(10^-50,length(counts)))$fit
+f[f==0] <- min(f[f>0])
+log_f <- as.vector(log(f))
+diff <- diff(log_f)/diff(mids)
+plot(diff, main="BMI GWAS 1", col.main=col[1]) + abline(h=0)
+```
+
+
+This `diff` plot is certainly better than the original. We see that all points to the left of the plot are greater than 0 while the majority of the points to the right of the plot are less than 0. The code below details how we may use the above and apply it to the full set of SNPs. 
+
+
+```{r}
+mids2 <- (mids[-length(mids)]+mids[-1])/2
+diff_interpol <- stats::approx(mids2,diff,mids,rule=2,ties=mean)$y
+mids_est <- c(rep(0,length(mids)))
+mids_est[mids>0] <- pmax(0, mids[mids>0] + diff_interpol[mids>0])
+mids_est[mids<0] <- pmin(0, mids[mids<0] + diff_interpol[mids<0])
+z_hat <- stats::approx(mids,mids_est,z,rule=1,ties=mean)$y  ## using full set of z here 
+z_hat[is.na(z_hat) & z > 0] <-  z[is.na(z_hat) & z > 0] +   diff_interpol[length(diff_interpol)]
+z_hat[is.na(z_hat) & z < 0] <-  z[is.na(z_hat) & z < 0] + diff_interpol[1]
+z_hat <- sign(z)*pmin(abs(z),abs(z_hat))
+beta_EB <- z_hat*summary_data_bmi_1$se
+summary_data <- cbind(summary_data_bmi_1[,3:5],beta_EB)
+summary_data <- dplyr::arrange(summary_data,dplyr::desc(abs(summary_data$beta/summary_data$se)))
+out_EB_prune <- summary_data
+```
+
+
+
+
+#### Fixing the degrees of freedom
+
+The current version of the empirical Bayes method uses an AIC approach to choose an appropriate degrees of freedom. However, it is most likely that this AIC approach is not working optimally due to the large amount of LD present in our full datasets. Thus, we will proceed with an empirical analysis in which we vary the value for the degrees of freedom and compute the corresponding `mse` for each GWAS. The plots below illustrate the results that we obtained. The degrees of freedom is on the x-axis while `mse` is on the y-axis. The square point indicates the degrees of freedom which provided the lowest `mse` for that GWAS. The straight lines included indicate the `mse` obtained using the `naive` approach for each GWAS as a sort of 'benchmark' for comparison. Some points or lines may be missing as limits have been put on the y-axis, however these points or lines are ones which are greater than the max y value on the plot. 
+
+
+```{r, echo=FALSE, eval=FALSE}
+
+EB_df <- function(summary_data,df){
+  z <- summary_data$beta/summary_data$se
+  bins <- seq(min(z),max(z),length.out=120)
+  mids <- (bins[-length(bins)]+bins[-1])/2
+  counts <- graphics::hist(z,breaks=bins,plot=F)$counts
+  most_extreme <- 10
+  boundary_lower <- sort(z)[most_extreme]
+  boundary_upper <- sort(z,decreasing=TRUE)[most_extreme]
+  f <- stats::glm(counts ~ splines::ns(mids,knots = (seq(from=boundary_lower,to=boundary_upper,length=df+1)[2:df]), Boundary.knots=c(boundary_lower,boundary_upper)),stats::poisson,weight=rep(10^-50,length(counts)))$fit
+  f[f==0] <- min(f[f>0])
+  log_f <- as.vector(log(f))
+  diff <- diff(log_f)/diff(mids)
+  mids2 <- (mids[-length(mids)]+mids[-1])/2
+  diff_interpol <- stats::approx(mids2,diff,mids,rule=2,ties=mean)$y
+  mids_est <- c(rep(0,length(mids)))
+  mids_est[mids>0] <- pmax(0, mids[mids>0] + diff_interpol[mids>0])
+  mids_est[mids<0] <- pmin(0, mids[mids<0] + diff_interpol[mids<0])
+  z_hat <- stats::approx(mids,mids_est,z,rule=1,ties=mean)$y
+  z_hat[is.na(z_hat) & z > 0] <-  z[is.na(z_hat) & z > 0] +   diff_interpol[length(diff_interpol)]
+  z_hat[is.na(z_hat) & z < 0] <-  z[is.na(z_hat) & z < 0] + diff_interpol[1]
+  z_hat <- sign(z)*pmin(abs(z),abs(z_hat))
+  beta_EB <- z_hat*summary_data$se
+  summary_data <- cbind(summary_data,beta_EB)
+  summary_data <- dplyr::arrange(summary_data,dplyr::desc(abs(summary_data$beta/summary_data$se)))
+  return(summary_data)
+}
+
+
+summary_data <- summary_data_T2D_2[,1:4]
+summary_data <- dplyr::arrange(summary_data,dplyr::desc(abs(summary_data$beta/summary_data$se)))
+z <- summary_data$beta/summary_data$se
+p_val <- 2*(1-stats::pnorm(abs(z)))
+summary_data <- cbind(summary_data, z, p_val)
+summary_data_sig <- summary_data[summary_data$p_val<5e-8,]
+true_beta <- summary_data_sig$beta_rep
+mse <- c()
+for(i in 2:30){
+  out <- EB_df(summary_data,i)
+  out_sig <- out[2*(1-pnorm(abs(out$beta/out$se))) < 5e-8,]
+  mse <- c(mse,sum((true_beta - out_sig$beta_EB)^2) - sum(out_sig$se^2))
+}
+mse_T2D2_5e_8 <- mse
+mse_T2D2_5e_8 <- mse_T2D2_5e_8/76
+
+summary_data <- summary_data_T2D_1[,1:4]
+summary_data <- dplyr::arrange(summary_data,dplyr::desc(abs(summary_data$beta/summary_data$se)))
+z <- summary_data$beta/summary_data$se
+p_val <- 2*(1-stats::pnorm(abs(z)))
+summary_data <- cbind(summary_data, z, p_val)
+summary_data_sig <- summary_data[summary_data$p_val<5e-8,]
+true_beta <- summary_data_sig$beta_rep
+mse <- c()
+for(i in 2:30){
+  out <- EB_df(summary_data,i)
+  out_sig <- out[2*(1-pnorm(abs(out$beta/out$se))) < 5e-8,]
+  mse <- c(mse,sum((true_beta - out_sig$beta_EB)^2) - sum(out_sig$se^2))
+}
+mse_T2D1_5e_8 <- mse
+mse_T2D1_5e_8 <- mse_T2D1_5e_8/31
+
+summary_data <- summary_data_bmi_1[,1:4]
+summary_data <- dplyr::arrange(summary_data,dplyr::desc(abs(summary_data$beta/summary_data$se)))
+z <- summary_data$beta/summary_data$se
+p_val <- 2*(1-stats::pnorm(abs(z)))
+summary_data <- cbind(summary_data, z, p_val)
+summary_data_sig <- summary_data[summary_data$p_val<5e-8,]
+true_beta <- summary_data_sig$beta_rep
+mse <- c()
+for(i in 2:30){
+  out <- EB_df(summary_data,i)
+  out_sig <- out[2*(1-pnorm(abs(out$beta/out$se))) < 5e-8,]
+  mse <- c(mse,sum((true_beta - out_sig$beta_EB)^2) - sum(out_sig$se^2))
+}
+mse_bmi1_5e_8 <- mse
+mse_bmi1_5e_8 <- mse_bmi1_5e_8/6908
+
+summary_data <- summary_data_bmi_2[,1:4]
+summary_data <- dplyr::arrange(summary_data,dplyr::desc(abs(summary_data$beta/summary_data$se)))
+z <- summary_data$beta/summary_data$se
+p_val <- 2*(1-stats::pnorm(abs(z)))
+summary_data <- cbind(summary_data, z, p_val)
+summary_data_sig <- summary_data[summary_data$p_val<5e-8,]
+true_beta <- summary_data_sig$beta_rep
+mse <- c()
+for(i in 2:30){
+  out <- EB_df(summary_data,i)
+  out_sig <- out[2*(1-pnorm(abs(out$beta/out$se))) < 5e-8,]
+  mse <- c(mse,sum((true_beta - out_sig$beta_EB)^2) - sum(out_sig$se^2))
+}
+mse_bmi2_5e_8 <- mse
+mse_bmi2_5e_8 <- mse_bmi2_5e_8/7951
+
+
+
+summary_data <- summary_data_T2D_2[,1:4]
+summary_data <- dplyr::arrange(summary_data,dplyr::desc(abs(summary_data$beta/summary_data$se)))
+z <- summary_data$beta/summary_data$se
+p_val <- 2*(1-stats::pnorm(abs(z)))
+summary_data <- cbind(summary_data, z, p_val)
+summary_data_sig <- summary_data[summary_data$p_val<5e-4,]
+true_beta <- summary_data_sig$beta_rep
+mse <- c()
+for(i in 2:30){
+  out <- EB_df(summary_data,i)
+  out_sig <- out[2*(1-pnorm(abs(out$beta/out$se))) < 5e-4,]
+  mse <- c(mse,sum((true_beta - out_sig$beta_EB)^2) - sum(out_sig$se^2))
+}
+mse_T2D2_5e_4 <- mse
+mse_T2D2_5e_4 <- mse_T2D2_5e_4/5507
+
+summary_data <- summary_data_T2D_1[,1:4]
+summary_data <- dplyr::arrange(summary_data,dplyr::desc(abs(summary_data$beta/summary_data$se)))
+z <- summary_data$beta/summary_data$se
+p_val <- 2*(1-stats::pnorm(abs(z)))
+summary_data <- cbind(summary_data, z, p_val)
+summary_data_sig <- summary_data[summary_data$p_val<5e-4,]
+true_beta <- summary_data_sig$beta_rep
+mse <- c()
+for(i in 2:30){
+  out <- EB_df(summary_data,i)
+  out_sig <- out[2*(1-pnorm(abs(out$beta/out$se))) < 5e-4,]
+  mse <- c(mse,sum((true_beta - out_sig$beta_EB)^2) - sum(out_sig$se^2))
+}
+mse_T2D1_5e_4 <- mse
+mse_T2D1_5e_4 <- mse_T2D1_5e_4/5832
+
+summary_data <- summary_data_bmi_1[,1:4]
+summary_data <- dplyr::arrange(summary_data,dplyr::desc(abs(summary_data$beta/summary_data$se)))
+z <- summary_data$beta/summary_data$se
+p_val <- 2*(1-stats::pnorm(abs(z)))
+summary_data <- cbind(summary_data, z, p_val)
+summary_data_sig <- summary_data[summary_data$p_val<5e-4,]
+true_beta <- summary_data_sig$beta_rep
+mse <- c()
+for(i in 2:30){
+  out <- EB_df(summary_data,i)
+  out_sig <- out[2*(1-pnorm(abs(out$beta/out$se))) < 5e-4,]
+  mse <- c(mse,sum((true_beta - out_sig$beta_EB)^2) - sum(out_sig$se^2))
+}
+mse_bmi1_5e_4 <- mse
+mse_bmi1_5e_4 <- mse_bmi1_5e_4/94173
+
+summary_data <- summary_data_bmi_2[,1:4]
+summary_data <- dplyr::arrange(summary_data,dplyr::desc(abs(summary_data$beta/summary_data$se)))
+z <- summary_data$beta/summary_data$se
+p_val <- 2*(1-stats::pnorm(abs(z)))
+summary_data <- cbind(summary_data, z, p_val)
+summary_data_sig <- summary_data[summary_data$p_val<5e-4,]
+true_beta <- summary_data_sig$beta_rep
+mse <- c()
+for(i in 2:30){
+  out <- EB_df(summary_data,i)
+  out_sig <- out[2*(1-pnorm(abs(out$beta/out$se))) < 5e-4,]
+  mse <- c(mse,sum((true_beta - out_sig$beta_EB)^2) - sum(out_sig$se^2))
+}
+mse_bmi2_5e_4 <- mse
+mse_bmi2_5e_4 <- mse_bmi2_5e_4/798351
+
+
+## Plotting these results
+mse <- data.frame(df = c(2:30,2:30,2:30,2:30), mse = c(mse_bmi1_5e_8, mse_bmi2_5e_8, mse_T2D1_5e_8, mse_T2D2_5e_8), GWAS = c(rep("BMI_1",29), rep("BMI_2",29), rep("T2D_1", 29), rep("T2D_2",29)))
+small_mse <- bind_rows(mse[mse$df==12 & mse$GWAS=="BMI_1",], mse[mse$df == 6 & mse$GWAS == "BMI_2",], mse[mse$df == 6 & mse$GWAS == "T2D_1",], mse[mse$df == 3 & mse$GWAS == "T2D_2",])
+mse_naive <- data.frame(df = c(2:30,2:30,2:30,2:30), mse = c(rep(0.0006548724,29), rep(0.00148166,29), rep(0.006411446,29), rep(0.003579806,29)), GWAS = c(rep("BMI_1",29), rep("BMI_2",29), rep("T2D_1", 29), rep("T2D_2",29)))
+
+ggplot(mse, aes(x=df, y=mse, color=GWAS)) + geom_point() + geom_point(data=small_mse, 
+             aes(x=df,y=mse, color=GWAS), 
+             size=3.5, shape=15) + geom_line(data=mse_naive, aes(x=df, y=mse, color=GWAS), size=0.5) +
+  labs(x = "degrees of freedom", y= "MSE", title="Threshold: 5e-8") + ylim(-0.001,0.01) + scale_x_continuous(breaks=seq(from=2,to=30,by=2)) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face="bold"),
+  ) + scale_color_manual(values=c(col[1],col[2],col[3],col[4]))
+
+
+mse <- data.frame(df = c(2:30,2:30,2:30,2:30), mse = c(mse_bmi1_5e_4, mse_bmi2_5e_4, mse_T2D1_5e_4, mse_T2D2_5e_4), GWAS = c(rep("BMI_1",29), rep("BMI_2",29), rep("T2D_1", 29), rep("T2D_2",29)))
+small_mse <- bind_rows(mse[mse$df==6 & mse$GWAS=="BMI_1",], mse[mse$df == 6 & mse$GWAS == "BMI_2",], mse[mse$df == 6 & mse$GWAS == "T2D_1",], mse[mse$df == 14 & mse$GWAS == "T2D_2",])
+mse_naive <- data.frame(df = c(2:30,2:30,2:30,2:30), mse = c(rep(0.002440761,29), rep(0.002889462,29), rep(0.08836548,29), rep(0.1036094,29)), GWAS = c(rep("BMI_1",29), rep("BMI_2",29), rep("T2D_1", 29), rep("T2D_2",29)))
+ggplot(mse, aes(x=df, y=mse, color=GWAS)) + geom_point() + geom_point(data=small_mse, 
+             aes(x=df,y=mse, color=GWAS), 
+             size=3.5, shape=15) + geom_line(data=mse_naive, aes(x=df, y=mse, color=GWAS), size=0.5) +
+  labs(x = "degrees of freedom", y= "MSE", title="Threshold: 5e-4") + ylim(-0.001,0.02) + scale_x_continuous(breaks=seq(from=2,to=30,by=2)) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face="bold"),
+  ) + scale_color_manual(values=c(col[1],col[2],col[3],col[4]))
+
+```
+
+
+
+```{r, echo=FALSE, out.width = '80%'}
+knitr::include_graphics("images/EB_df_mse_5e_8.png")
+```
+
+```{r, echo=FALSE, out.width = '80%'}
+knitr::include_graphics("images/EB_df_mse_5e_4.png")
+```
+
+
+
+Thus, based on this empirical analysis of real data sets, it seems appropriate to suggest using a pre-specificed value of 6 for the degrees of freedom. In `winnerscurse` package, using `èmpirical_bayes()` we can set `AIC=FALSE`. Below, we will see what this adaptation means for us in terms of our chosen evaluation metrics. 
+
+
+
+
+
+### Re-evaluating methods 
+
+
+We have suggested an alternative form for FDR Inverse Quantile Transformation as well as several modifications that could be made to the empirical Bayes approach. In order to evaluate if these changes improve the methods, we repeat what we have done above in terms of computing two defined metrics, `mse` and `mse.n`. 
+
+
+#### BMI GWAS 1
+
+As before, we will first apply a threshold of `5e-8` in order to classify significant SNPs and subsequently, a threshold of `5e-4`. Due to the consistent poor performance of the conditional likelihood methods that we witnessed above, they have not been included in the results below. 
+
+```{r, echo=FALSE}
+
+summary_stats <- summary_data_bmi_1[,3:5]
+ 
+out_EB <- empirical_bayes(summary_data = summary_stats)
+out_EB_scam <- empirical_bayes_scam(summary_data = summary_stats)
+out_EB_df <- empirical_bayes(summary_data=summary_stats, AIC=FALSE)
+out_FIQT <- FDR_IQT(summary_data = summary_stats)
+out_FIQT2 <- FDR_IQT2(summary_data=summary_stats)
+
+out_EB_sig <- out_EB[2*(1-pnorm(abs(out_EB$beta/out_EB$se))) < 5e-8,]
+out_EB_scam_sig <- out_EB_scam[2*(1-pnorm(abs(out_EB_scam$beta/out_EB_scam$se))) < 5e-8,]
+out_EB_df_sig <- out_EB_df[2*(1-pnorm(abs(out_EB_df$beta/out_EB_df$se))) < 5e-8,]
+out_EB_prune_sig <- out_EB_prune[2*(1-pnorm(abs(out_EB_prune$beta/out_EB_prune$se))) < 5e-8,]
+
+out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-8,]
+out_FIQT2_sig <- out_FIQT2[2*(1-pnorm(abs(out_FIQT2$beta/out_FIQT2$se))) < 5e-8,]
+out_BR_ss_sig <- out_BR_bmi1[2*(1-pnorm(abs(out_BR_bmi1$beta/out_BR_bmi1$se))) < 5e-8,]
+
+```
+
+
+```{r, echo=FALSE}
+true_beta <- summary_data_sig_bmi_1$beta_rep 
+
+mse_BMI1 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), beta_EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_EB_prune = mean((true_beta - out_EB_prune_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), beta_FIQT2 = mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), beta_boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2))
+
+mse.n_BMI1 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), beta_EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_EB_prune = sum((true_beta - out_EB_prune_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_FIQT2 = sum((true_beta - out_FIQT2_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2))
+
+```
+
+
+```{r}
+mse_BMI1
+
+mse.n_BMI1
+```
+
+
+Here, we see that our three suggested improvements on the original empirical Bayes method have performed better, with the one in which we have fixed the degrees of freedom to 6 having the lowest `mse` value. We note that the adaptation to FDR IQT is performing worse than it does in its original form. This is most likely due to some SNPs undergoing over-reductions in their estimated effect sizes.
+
+
+Using the greater threshold of `5e-4`, we obtain the following: 
+
+```{r, echo=FALSE}
+out_EB_sig <- out_EB[2*(1-pnorm(abs(out_EB$beta/out_EB$se))) < 5e-4,]
+out_EB_scam_sig <- out_EB_scam[2*(1-pnorm(abs(out_EB_scam$beta/out_EB_scam$se))) < 5e-4,]
+out_EB_prune_sig <- out_EB_prune[2*(1-pnorm(abs(out_EB_prune$beta/out_EB_prune$se))) < 5e-4,] 
+out_EB_df_sig <- out_EB_df[2*(1-pnorm(abs(out_EB_df$beta/out_EB_df$se))) < 5e-4,]
+out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-4,]
+out_FIQT2_sig <- out_FIQT2[2*(1-pnorm(abs(out_FIQT2$beta/out_FIQT2$se))) < 5e-4,]
+out_BR_ss_sig <- out_BR_bmi1[2*(1-pnorm(abs(out_BR_bmi1$beta/out_BR_bmi1$se))) < 5e-4,]
+
+summary_data_sig2 <- summary_data_bmi_1[summary_data_bmi_1$p_val<5e-4,]
+true_beta <- summary_data_sig2$beta_rep
+
+
+mse_BMI1_5e_4 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), beta_EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_EB_prune = mean((true_beta - out_EB_prune_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), beta_FIQT2 = mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), beta_boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2))
+
+mse.n_BMI1_5e_4 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), beta_EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_EB_prune = sum((true_beta - out_EB_prune_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_FIQT2 = sum((true_beta - out_FIQT2_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2))
+
+```
+
+```{r}
+mse_BMI1_5e_4
+mse.n_BMI1_5e_4
+```
+
+These results are very similar to those above but with `empirical_bayes_scam` performing slightly better this time. 
+
+<br> 
+
+
+#### BMI GWAS 2
+
+
+```{r, echo=FALSE}
+
+summary_stats <- summary_data_bmi_2[,3:5]
+ 
+out_EB <- empirical_bayes(summary_data = summary_stats)
+out_EB_scam <- empirical_bayes_scam(summary_data = summary_stats)
+out_EB_df <- empirical_bayes(summary_data=summary_stats, AIC=FALSE)
+out_FIQT <- FDR_IQT(summary_data = summary_stats)
+out_FIQT2 <- FDR_IQT2(summary_data=summary_stats)
+
+out_EB_sig <- out_EB[2*(1-pnorm(abs(out_EB$beta/out_EB$se))) < 5e-8,]
+out_EB_scam_sig <- out_EB_scam[2*(1-pnorm(abs(out_EB_scam$beta/out_EB_scam$se))) < 5e-8,]
+out_EB_df_sig <- out_EB_df[2*(1-pnorm(abs(out_EB_df$beta/out_EB_df$se))) < 5e-8,]
+
+out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-8,]
+out_FIQT2_sig <- out_FIQT2[2*(1-pnorm(abs(out_FIQT2$beta/out_FIQT2$se))) < 5e-8,]
+out_BR_ss_sig <- out_BR_bmi2[2*(1-pnorm(abs(out_BR_bmi2$beta/out_BR_bmi2$se))) < 5e-8,]
+
+```
+
+
+```{r, echo=FALSE}
+true_beta <- summary_data_sig_bmi_2$beta_rep 
+
+mse_BMI2 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), beta_EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), beta_FIQT2 = mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), beta_boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2))
+
+mse.n_BMI2 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), beta_EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_FIQT2 = sum((true_beta - out_FIQT2_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2))
+
+```
+
+
+```{r}
+mse_BMI2
+mse.n_BMI2
+```
+
+
+We witness similar results to those for **BMI GWAS 1**. Both adaptations have improved the empirical Bayes method, but with the fixing of the degrees of freedom being the clear winner here with the lowest value. Also, the change to FDR IQT continues to perform poorly in comparison to the original definition of the method in which it doesn't adjust the estimated effect sizes of SNPs with very small $p$-values, i.e. < `1e-15`.
+
+
+ 
+
+```{r, echo=FALSE}
+out_EB_sig <- out_EB[2*(1-pnorm(abs(out_EB$beta/out_EB$se))) < 5e-4,]
+out_EB_scam_sig <- out_EB_scam[2*(1-pnorm(abs(out_EB_scam$beta/out_EB_scam$se))) < 5e-4,]
+out_EB_df_sig <- out_EB_df[2*(1-pnorm(abs(out_EB_df$beta/out_EB_df$se))) < 5e-4,]
+out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-4,]
+out_FIQT2_sig <- out_FIQT2[2*(1-pnorm(abs(out_FIQT2$beta/out_FIQT2$se))) < 5e-4,]
+out_BR_ss_sig <- out_BR_bmi2[2*(1-pnorm(abs(out_BR_bmi2$beta/out_BR_bmi2$se))) < 5e-4,]
+
+summary_data_sig2 <- summary_data_bmi_2[summary_data_bmi_2$p_val<5e-4,]
+true_beta <- summary_data_sig2$beta_rep
+
+
+mse_BMI2_5e_4 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), beta_EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), beta_FIQT2 = mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), beta_boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2))
+
+mse.n_BMI2_5e_4 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), beta_EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_FIQT2 = sum((true_beta - out_FIQT2_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2))
+
+```
+
+```{r}
+mse_BMI2_5e_4
+mse.n_BMI2_5e_4
+```
+
+
+This second set of results support the observations we have made above. 
+
+<br>
+
+#### T2D GWAS 1
+
+
+```{r, echo=FALSE}
+
+summary_stats <- summary_data_T2D_1[,3:5]
+ 
+out_EB <- empirical_bayes(summary_data = summary_stats)
+out_EB_scam <- empirical_bayes_scam(summary_data = summary_stats)
+out_EB_df <- empirical_bayes(summary_data=summary_stats, AIC=FALSE)
+out_FIQT <- FDR_IQT(summary_data = summary_stats)
+out_FIQT2 <- FDR_IQT2(summary_data=summary_stats)
+
+out_EB_sig <- out_EB[2*(1-pnorm(abs(out_EB$beta/out_EB$se))) < 5e-8,]
+out_EB_scam_sig <- out_EB_scam[2*(1-pnorm(abs(out_EB_scam$beta/out_EB_scam$se))) < 5e-8,]
+out_EB_df_sig <- out_EB_df[2*(1-pnorm(abs(out_EB_df$beta/out_EB_df$se))) < 5e-8,]
+
+out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-8,]
+out_FIQT2_sig <- out_FIQT2[2*(1-pnorm(abs(out_FIQT2$beta/out_FIQT2$se))) < 5e-8,]
+out_BR_ss_sig <- out_BR_T2D1[2*(1-pnorm(abs(out_BR_T2D1$beta/out_BR_T2D1$se))) < 5e-8,]
+
+```
+
+
+```{r, echo=FALSE}
+true_beta <- summary_data_sig_T2D_1$beta_rep 
+
+mse_T2D1 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), beta_EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), beta_FIQT2 = mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), beta_boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2))
+
+mse.n_T2D1 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), beta_EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_FIQT2 = sum((true_beta - out_FIQT2_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2))
+
+```
+
+
+```{r}
+mse_T2D1
+mse.n_T2D1
+```
+
+
+Recall that this GWAS is one in which we witness that most of the significant SNPs at the `5e-8` threshold have estimated effect sizes that are in *greater* in the replication GWAS than in the discovery. For this reason, we still see that the `naive` approach has the smallest value here. That said, we see that the two modifications we have made to the empirical Bayes methods have `mse` values much closer to that of the `naive` approach. 
+
+
+
+```{r, echo=FALSE}
+out_EB_sig <- out_EB[2*(1-pnorm(abs(out_EB$beta/out_EB$se))) < 5e-4,]
+out_EB_scam_sig <- out_EB_scam[2*(1-pnorm(abs(out_EB_scam$beta/out_EB_scam$se))) < 5e-4,]
+out_EB_df_sig <- out_EB_df[2*(1-pnorm(abs(out_EB_df$beta/out_EB_df$se))) < 5e-4,]
+out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-4,]
+out_FIQT2_sig <- out_FIQT2[2*(1-pnorm(abs(out_FIQT2$beta/out_FIQT2$se))) < 5e-4,]
+out_BR_ss_sig <- out_BR_T2D1[2*(1-pnorm(abs(out_BR_T2D1$beta/out_BR_T2D1$se))) < 5e-4,]
+
+summary_data_sig2 <- summary_data_T2D_1[summary_data_T2D_1$p_val<5e-4,]
+true_beta <- summary_data_sig2$beta_rep
+
+
+mse_T2D1_5e_4 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), beta_EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), beta_FIQT2 = mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), beta_boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2))
+
+mse.n_T2D1_5e_4 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), beta_EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_FIQT2 = sum((true_beta - out_FIQT2_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2))
+
+```
+
+```{r}
+mse_T2D1_5e_4
+mse.n_T2D1_5e_4
+```
+
+
+We continue to see similar results in which the values of `beta_EB_df` and `beta_EB_scam` are the two lowest while `beta_FIQT2` is larger than that of its predecessor, `beta_FIQT`. 
+
+<br>
+
+#### T2D GWAS 2
+
+
+```{r, echo=FALSE}
+
+summary_stats <- summary_data_T2D_2[,3:5]
+ 
+out_EB <- empirical_bayes(summary_data = summary_stats)
+out_EB_scam <- empirical_bayes_scam(summary_data = summary_stats)
+out_EB_df <- empirical_bayes(summary_data=summary_stats, AIC=FALSE)
+out_FIQT <- FDR_IQT(summary_data = summary_stats)
+out_FIQT2 <- FDR_IQT2(summary_data=summary_stats)
+
+out_EB_sig <- out_EB[2*(1-pnorm(abs(out_EB$beta/out_EB$se))) < 5e-8,]
+out_EB_scam_sig <- out_EB_scam[2*(1-pnorm(abs(out_EB_scam$beta/out_EB_scam$se))) < 5e-8,]
+out_EB_df_sig <- out_EB_df[2*(1-pnorm(abs(out_EB_df$beta/out_EB_df$se))) < 5e-8,]
+
+out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-8,]
+out_FIQT2_sig <- out_FIQT2[2*(1-pnorm(abs(out_FIQT2$beta/out_FIQT2$se))) < 5e-8,]
+out_BR_ss_sig <- out_BR_T2D2[2*(1-pnorm(abs(out_BR_T2D2$beta/out_BR_T2D2$se))) < 5e-8,]
+
+```
+
+
+```{r, echo=FALSE}
+true_beta <- summary_data_sig_T2D_2$beta_rep 
+
+mse_T2D2 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), beta_EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), beta_FIQT2 = mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), beta_boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2))
+
+mse.n_T2D2 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), beta_EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_FIQT2 = sum((true_beta - out_FIQT2_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2))
+
+```
+
+
+```{r}
+mse_T2D2
+mse.n_T2D2
+```
+
+The results here are not as straightforward as above. We still see that improvements have been made to the `mse` value of the original empirical Bayes method with the values of `beta_EB_scam` and `beta_EB_df` now below that of the `naive` approach. However, the adaptation to FDR IQT has now resulted in an improved performance. 
+
+
+
+```{r, echo=FALSE}
+out_EB_sig <- out_EB[2*(1-pnorm(abs(out_EB$beta/out_EB$se))) < 5e-4,]
+out_EB_scam_sig <- out_EB_scam[2*(1-pnorm(abs(out_EB_scam$beta/out_EB_scam$se))) < 5e-4,]
+out_EB_df_sig <- out_EB_df[2*(1-pnorm(abs(out_EB_df$beta/out_EB_df$se))) < 5e-4,]
+out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-4,]
+out_FIQT2_sig <- out_FIQT2[2*(1-pnorm(abs(out_FIQT2$beta/out_FIQT2$se))) < 5e-4,]
+out_BR_ss_sig <- out_BR_T2D2[2*(1-pnorm(abs(out_BR_T2D2$beta/out_BR_T2D2$se))) < 5e-4,]
+
+summary_data_sig2 <- summary_data_T2D_2[summary_data_T2D_2$p_val<5e-4,]
+true_beta <- summary_data_sig2$beta_rep
+
+
+mse_T2D2_5e_4 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), beta_EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), beta_FIQT2 = mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), beta_boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2))
+
+mse.n_T2D2_5e_4 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), beta_EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_FIQT2 = sum((true_beta - out_FIQT2_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2))
+
+```
+
+```{r}
+mse_T2D2_5e_4
+mse.n_T2D2_5e_4
+```
+
+
+If we analyse the plot above that depicted `mse` vs degrees of freedom at this threshold of `5e-4`, the larger `mse` value of `beta_EB_df` comes as no surprise here. Encouragingly, all methods are performing considerably better than the `naive` approach, but FDR IQT seems to be doing better than any variation of the empirical Bayes method. 
+
+
