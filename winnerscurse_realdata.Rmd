@@ -2,7 +2,10 @@
 title: "Evaluating Winner's Curse correction methods using real data sets"
 author: ""
 date: ""
-output: html_document
+output: 
+  html_document:
+    toc: yes
+
 ---
 
 ```{r setup, include=FALSE}

@@ -168,6 +168,25 @@ pre code {
 
 </div>
 
+<div id="TOC">
+<ul>
+<li><a href="#bmi-gwas">BMI GWAS</a></li>
+<li><a href="#t2d-gwas">T2D GWAS</a></li>
+<li><a href="#evaluating-methods">Evaluating methods</a>
+<ul>
+<li><a href="#bmi-1">BMI 1</a></li>
+<li><a href="#bmi-2">BMI 2</a></li>
+<li><a href="#t2d-1">T2D 1</a></li>
+<li><a href="#t2d-2">T2D 2</a></li>
+</ul></li>
+<li><a href="#improving-methods">Improving methods</a>
+<ul>
+<li><a href="#fdr-inverse-quantile-transformation">FDR Inverse Quantile Transformation</a></li>
+<li><a href="#empirical-bayes">Empirical Bayes</a></li>
+<li><a href="#re-evaluating-methods">Re-evaluating methods</a></li>
+</ul></li>
+</ul>
+</div>
 
 <p>In this document, we will detail our investigation of the performance of various Winner’s Curse correction methods when they are applied to real data sets. These methods include 3 conditional likelihood approaches, Empirical Bayes, FDR Inverse Quantile Transformation and a bootstrap method which has been adapted for use with summary data. The methods were all implemented using the R package, <code>winnerscurse</code>. Note that we are focusing on those methods which make adjustments using only summary statistics from the discovery GWAS, rather than methods which combine information gained from both discovery and replication GWASs. In our study, the replication GWAS is used to assist in measuring how well each correction method performs.</p>
 <p>We first begin with a discussion of the two data sets we have used, namely BMI and Type 2 Diabetes (T2D), and analyze the summary statistics obtained upon performing two independent GWASs for each trait. Recall that the Winner’s Curse is a statistical effect usually resulting in the exaggeration of SNP-trait association estimates in the sample in which these associations were discovered. In order to ensure that unbiased association estimates are obtained, the current common practice is that one GWAS is used to <em>discover</em> the significant SNPs and another GWAS, namely a replication GWAS, is performed to obtain the corresponding effect size estimates for each of these significant SNPs. For this reason, we randomly split the large data set in two for each trait, allowing us to conduct a <em>discovery</em> GWAS and a corresponding independent <em>replication</em> GWAS. The intention is that we will be able to compare the association estimates obtained in both GWASs for those SNPs that have been deemed significant in the <em>discovery</em> GWAS according to a specified threshold such as <code>5e-8</code>.</p>
@@ -224,12 +243,12 @@ pre code {
 ##  rs55872725 0.37212 0.01659  0.37212  0.37212  0.37212 0.37003   0.37212
 ##  rs56094641 0.37199 0.01659  0.37199  0.37199  0.37199 0.36990   0.37199
 ##  beta_boot
-##    0.36581
-##    0.36577
-##    0.36565
-##    0.36572
-##    0.36494
-##    0.36483</code></pre>
+##    0.36379
+##    0.36375
+##    0.36364
+##    0.36371
+##    0.36301
+##    0.36290</code></pre>
 <p>It can be seen here that the top 6 significant SNPs do not get adjusted by the conditional likelihood methods or FDR IQT. This is what we would expect given that FDR IQT cannot adjust the effect sizes of any SNPs which have a <span class="math inline">\(p\)</span>-value less than <code>1e-15</code>. However, we will attempt to adapt this method later so that adjustments can be made to these SNPs with extremely low <span class="math inline">\(p\)</span>-values. We are also not surprised to see this behaviour with the conditional likelihood methods as it is known that they tend to make much greater adjustments to those SNPs which fall very close to the threshold while making little or no correction to SNPs with very large <span class="math inline">\(z\)</span>-scores.</p>
 <pre class="r"><code>print(results[1441:1446,], row.names=FALSE)</code></pre>
 <pre><code>##        rsid    beta      se beta.cl1 beta.cl2 beta.cl3 beta_EB beta_FIQT
@@ -240,32 +259,32 @@ pre code {
 ##    rs684227 0.12534 0.01646  0.12464  0.12253  0.12359 0.12534   0.10554
 ##  rs13107325 0.23706 0.03113  0.23573  0.23174  0.23373 0.23706   0.19958
 ##  beta_boot
-##    0.11144
-##    0.11119
-##    0.11183
-##    0.11150
-##    0.10881
-##    0.20578</code></pre>
+##    0.11181
+##    0.11156
+##    0.11220
+##    0.11187
+##    0.10917
+##    0.20646</code></pre>
 <p>In this set of results, we notice that the empirical Bayes method has failed to decrease the effect sizes of all SNPs. This is most likely due to the way in which the distribution of the data is being modelled but we will conduct a more detailed investigation into this later.</p>
 <p>Bearing these observations in mind, we compute <code>mse</code> and <code>mse.n</code> and obtain the following:</p>
 <pre class="r"><code>mse_BMI1</code></pre>
 <pre><code>##          naive    beta.cl1     beta.cl2    beta.cl3      beta_EB    beta_FIQT
 ## 1 0.0006548724 0.001665055 0.0007066511 0.001081376 0.0003565754 0.0003487339
 ##      beta_boot
-## 1 0.0003388983</code></pre>
+## 1 0.0003334886</code></pre>
 <pre class="r"><code>mse.n_BMI1</code></pre>
 <pre><code>##      naive beta.cl1 beta.cl2 beta.cl3  beta_EB beta_FIQT beta_boot
-## 1 4.523858  11.5022 4.881546 7.470148 2.463223  2.409054  2.341109</code></pre>
+## 1 4.523858  11.5022 4.881546 7.470148 2.463223  2.409054  2.303739</code></pre>
 <p>Here, it seems that it is in fact the bootstrap method which performs the best, obtaining the smallest values. However, the empirical Bayes approach and FDR IQT also have values which are less than that of the <code>naive</code> approach, i.e. using non-adjusted assoication estimates. This is an encouraging observation. That said, it is concerning that all of the three conditional likelihood methods demonstrate poor performance, when evaluated with this metric. We perhaps would have hoped to see lower values for the empirical Bayes method - this observation provides motivation to attempt improving the method, making it more suitable for application to real data.</p>
 <p>We also have a look at computing these same quantities when the threshold is changed to a less stringent one of <code>5e-4</code>. Here, we obtain the following results:</p>
 <pre class="r"><code>mse_BMI1_5e_4</code></pre>
 <pre><code>##         naive    beta.cl1     beta.cl2    beta.cl3      beta_EB    beta_FIQT
 ## 1 0.002440761 0.001179601 0.0007799025 0.000872029 0.0007357532 0.0007644441
 ##     beta_BR_ss
-## 1 0.0007671551</code></pre>
+## 1 0.0007671565</code></pre>
 <pre class="r"><code>mse.n_BMI1_5e_4</code></pre>
 <pre><code>##      naive beta.cl1 beta.cl2 beta.cl3  beta_EB beta_FIQT beta_boot
-## 1 229.8537 111.0866 73.44576 82.12158 69.28808  71.98999   72.2453</code></pre>
+## 1 229.8537 111.0866 73.44576 82.12158 69.28808  71.98999  72.24543</code></pre>
 <p>We witness a similar pattern to that above but with all methods having lower values than that of the <code>naive</code> approach. It is the empirical Bayes method which performs the best in this instance.</p>
 </div>
 <div id="bmi-2" class="section level3">
@@ -280,12 +299,12 @@ pre code {
 ##  rs62048402 0.34579 0.01668  0.34578  0.34579  0.34579 0.34054   0.34579
 ##  rs56094641 0.34530 0.01668  0.34530  0.34530  0.34530 0.34006   0.34530
 ##  beta_boot
-##    0.33969
-##    0.33960
-##    0.33954
-##    0.33953
-##    0.33953
-##    0.33913</code></pre>
+##    0.34328
+##    0.34319
+##    0.34312
+##    0.34312
+##    0.34311
+##    0.34270</code></pre>
 <p>Similar to above, we see that the conditional likelihood methods and FDR IQT do not adjust the estimated effect sizes of the most significant SNPs.</p>
 <pre class="r"><code>print(results[445:450,], row.names=FALSE)</code></pre>
 <pre><code>##        rsid    beta      se beta.cl1 beta.cl2 beta.cl3 beta_EB beta_FIQT
@@ -296,32 +315,32 @@ pre code {
 ##  rs17066562 0.20996 0.01894  0.20996  0.20996  0.20996 0.20996   0.20996
 ##   rs6567155 0.20994 0.01894  0.20994  0.20994  0.20994 0.20994   0.20994
 ##  beta_boot
-##    0.20513
-##    0.20495
-##    0.20416
-##    0.20407
-##    0.20402
-##    0.20398</code></pre>
+##    0.20496
+##    0.20477
+##    0.20398
+##    0.20390
+##    0.20384
+##    0.20380</code></pre>
 <p>For this set of SNPs, we notice that only the bootstrap method makes adjustments to the association estimates. These SNPs still have large enough <span class="math inline">\(z\)</span>-scores and small enough <span class="math inline">\(p\)</span>-values to expect that the conditional likelihood methods and FDR IQT would make little or no adjustments. However, it is the failure of the empirical Bayes approach to adjust the estimated effect sizes that our attention is drawn to. We hypothesize that it is an issue with the manner in which the method models the distribution that is responsible for this.</p>
 <p>We compute <code>mse</code> and <code>mse.n</code>:</p>
 <pre class="r"><code>mse_BMI2</code></pre>
 <pre><code>##        naive    beta.cl1     beta.cl2    beta.cl3      beta_EB    beta_FIQT
 ## 1 0.00148166 0.001624388 0.0006457771 0.001033301 0.0005797177 0.0004961687
 ##      beta_boot
-## 1 0.0005749085</code></pre>
+## 1 0.0005615798</code></pre>
 <pre class="r"><code>mse.n_BMI2</code></pre>
 <pre><code>##      naive beta.cl1 beta.cl2 beta.cl3  beta_EB beta_FIQT beta_boot
-## 1 11.78067 12.91551 5.134574  8.21578 4.609336  3.945037  4.571097</code></pre>
+## 1 11.78067 12.91551 5.134574  8.21578 4.609336  3.945037  4.465121</code></pre>
 <p>Here, it is only the first conditional likelihood method that has values larger than the <code>naive</code> approach while FDR IQT is seen to perform the best overall.</p>
 <p>We repeat using the larger threshold of <code>5e-4</code>:</p>
 <pre class="r"><code>mse_BMI2_5e_4</code></pre>
 <pre><code>##         naive   beta.cl1    beta.cl2    beta.cl3      beta_EB    beta_FIQT
 ## 1 0.002889462 0.00145181 0.001018003 0.001126171 0.0008535473 0.0008686253
-##     beta_BR_ss
-## 1 0.0008853462</code></pre>
+##    beta_BR_ss
+## 1 0.000876333</code></pre>
 <pre class="r"><code>mse.n_BMI2_5e_4</code></pre>
 <pre><code>##      naive beta.cl1 beta.cl2 beta.cl3  beta_EB beta_FIQT beta_boot
-## 1 284.1814 142.7869 100.1216   110.76 83.94723  85.43016  87.07468</code></pre>
+## 1 284.1814 142.7869 100.1216   110.76 83.94723  85.43016  86.18823</code></pre>
 <p>Again, we witness a similar pattern to above in which all methods perform better than the <code>naive</code> approach. It seems that at these less stringent thresholds, the empirical Bayes method continues to prove its ability in reducing the association estimates to values that are close to what would have been obtained in a replication GWAS of similar size.</p>
 </div>
 <div id="t2d-1" class="section level3">
@@ -337,32 +356,32 @@ pre code {
 ##  rs10659211 0.33004 0.04009  0.32969  0.32759  0.32864 0.31931   0.33004
 ##   rs7074440 0.32863 0.03998  0.32828  0.32613  0.32721 0.31794   0.32863
 ##  beta_boot
-##    0.31991
-##    0.31483
-##    0.30134
-##    0.28706
-##    0.27945
-##    0.27769</code></pre>
+##    0.31200
+##    0.30779
+##    0.29661
+##    0.28419
+##    0.27770
+##    0.27608</code></pre>
 <p>In this case, we see that every method except FDR IQT reduces the estimated effect sizes of the top significant SNPs.</p>
 <p>We compute <code>mse</code> and <code>mse.n</code> and obtain the following:</p>
 <pre class="r"><code>mse_T2D1</code></pre>
 <pre><code>##         naive    beta.cl1   beta.cl2    beta.cl3    beta_EB  beta_FIQT
 ## 1 0.006411446 0.008107866 0.01004137 0.009032032 0.02353532 0.02127989
 ##    beta_boot
-## 1 0.02251936</code></pre>
+## 1 0.02150008</code></pre>
 <pre class="r"><code>mse.n_T2D1</code></pre>
 <pre><code>##       naive  beta.cl1  beta.cl2 beta.cl3   beta_EB beta_FIQT beta_boot
-## 1 0.1987548 0.2513438 0.3112824 0.279993 0.7295949 0.6596767 0.6981001</code></pre>
+## 1 0.1987548 0.2513438 0.3112824 0.279993 0.7295949 0.6596767 0.6665026</code></pre>
 <p>As expected, the values for all methods are larger than that of the <code>naive</code> approach. Interestingly, it the is the first conditional likelihood method which has the lowest value of all methods. However, as these metrics are only being evaluated over 31 significant SNPs, most of which have <em>larger</em> association estimates in the replication GWAS, we will not place much emphasis on this set of results.</p>
 <p>We now consider using a threshold of <code>5e-4</code>:</p>
 <pre class="r"><code>mse_T2D1_5e_4</code></pre>
 <pre><code>##        naive   beta.cl1   beta.cl2   beta.cl3     beta_EB   beta_FIQT
 ## 1 0.08836548 0.01576176 0.02868879 0.02046512 0.004775477 0.004449678
 ##   beta_BR_ss
-## 1 0.01271157</code></pre>
+## 1  0.0125431</code></pre>
 <pre class="r"><code>mse.n_T2D1_5e_4</code></pre>
 <pre><code>##      naive beta.cl1 beta.cl2 beta.cl3  beta_EB beta_FIQT beta_boot
-## 1 515.3475 91.92261  167.313 119.3526 27.85058  25.95052  74.13388</code></pre>
+## 1 515.3475 91.92261  167.313 119.3526 27.85058  25.95052  73.15137</code></pre>
 <p>These results can be understood to be much more appropriate than the previous set for comparing our Winner’s Curse correction methods. We see that all methods now have values less than that of the <code>naive</code> approach with the empirical Bayes approach and FDR IQT having the smallest values. Ideally, we would anticipate that empirical Bayes would perform better - perhaps making a modification to the method may allow it to make better adjustments to the estimated effect sizes of these significant SNPs? We will investigate this further later.</p>
 </div>
 <div id="t2d-2" class="section level3">
@@ -377,30 +396,30 @@ pre code {
 ##  rs10659211 0.37476 0.04047  0.37475  0.37440  0.37457 0.33412   0.37476
 ##  rs36090025 0.37366 0.04048  0.37365  0.37328  0.37346 0.33300   0.37366
 ##  beta_boot
-##    0.39021
-##    0.39018
-##    0.38511
-##    0.35769
-##    0.35554
-##    0.35385</code></pre>
+##    0.38051
+##    0.38045
+##    0.37536
+##    0.34799
+##    0.34586
+##    0.34418</code></pre>
 <p>Just like above, we see that every method except FDR IQT reduces the estimated effect sizes of the top significant SNPs.</p>
 <p>We compute <code>mse</code> and <code>mse.n</code>:</p>
 <pre class="r"><code>mse_T2D2</code></pre>
 <pre><code>##         naive    beta.cl1    beta.cl2    beta.cl3     beta_EB    beta_FIQT
 ## 1 0.003579806 0.002167959 0.001157571 0.001593969 0.003709755 0.0006299248
 ##       beta_boot
-## 1 -0.0005811105</code></pre>
+## 1 -0.0008015779</code></pre>
 <pre class="r"><code>mse.n_T2D2</code></pre>
-<pre><code>##       naive  beta.cl1   beta.cl2  beta.cl3   beta_EB  beta_FIQT  beta_boot
-## 1 0.2720652 0.1647649 0.08797536 0.1211416 0.2819414 0.04787428 -0.0441644</code></pre>
+<pre><code>##       naive  beta.cl1   beta.cl2  beta.cl3   beta_EB  beta_FIQT   beta_boot
+## 1 0.2720652 0.1647649 0.08797536 0.1211416 0.2819414 0.04787428 -0.06091992</code></pre>
 <p>It is concerning here that the empirical Bayes method has a greater value than the <code>naive</code> approach. This certainly warrants further investigation which will take place later. All other methods perform better than the <code>naive</code> approach, with the bootstrap method performing the best.</p>
 <p>We increase the threshold used to <code>5e-4</code>:</p>
 <pre class="r"><code>mse_T2D2_5e_4</code></pre>
 <pre><code>##       naive   beta.cl1   beta.cl2   beta.cl3    beta_EB   beta_FIQT beta_BR_ss
-## 1 0.1036094 0.02051588 0.03668525 0.02673712 0.00851429 0.007839031 0.01790411</code></pre>
+## 1 0.1036094 0.02051588 0.03668525 0.02673712 0.00851429 0.007839031 0.01784325</code></pre>
 <pre class="r"><code>mse.n_T2D2_5e_4</code></pre>
 <pre><code>##      naive beta.cl1 beta.cl2 beta.cl3 beta_EB beta_FIQT beta_boot
-## 1 570.5772 112.9809 202.0257 147.2413 46.8882  43.16954  98.59793</code></pre>
+## 1 570.5772 112.9809 202.0257 147.2413 46.8882  43.16954  98.26277</code></pre>
 <p>Here, we obtain very similar results to those of <strong>T2D GWAS 1</strong> at the same threshold and thus, they can be interpreted in the same manner.</p>
 <p><br></p>
 </div>
@@ -553,24 +572,24 @@ out_EB_prune &lt;- summary_data</code></pre>
 <pre><code>##          naive      beta_EB beta_EB_scam beta_EB_prune   beta_EB_df
 ## 1 0.0006548724 0.0003565754 0.0003286228  0.0003712039 0.0003148336
 ##      beta_FIQT   beta_FIQT2    beta_boot
-## 1 0.0003487339 0.0003872474 0.0003388983</code></pre>
+## 1 0.0003487339 0.0003872474 0.0003334886</code></pre>
 <pre class="r"><code>mse.n_BMI1</code></pre>
 <pre><code>##      naive  beta_EB beta_EB_scam beta_EB_prune beta_EB_df beta_FIQT beta_FIQT2
 ## 1 4.523858 2.463223     2.270126      2.564277   2.174871  2.409054   2.675105
 ##   beta_boot
-## 1  2.341109</code></pre>
+## 1  2.303739</code></pre>
 <p>Here, we see that our three suggested improvements on the original empirical Bayes method have performed better, with the one in which we have fixed the degrees of freedom to 7 having the lowest <code>mse</code> value. We note that the adaptation to FDR IQT is performing worse than it does in its original form. This is most likely due to some SNPs undergoing over-reductions in their estimated effect sizes.</p>
 <p>Using the greater threshold of <code>5e-4</code>, we obtain the following:</p>
 <pre class="r"><code>mse_BMI1_5e_4</code></pre>
 <pre><code>##         naive      beta_EB beta_EB_scam beta_EB_prune   beta_EB_df    beta_FIQT
 ## 1 0.002440761 0.0007357532 0.0007101274  0.0006862523 0.0006880529 0.0007644441
 ##     beta_FIQT2    beta_boot
-## 1 0.0007672692 0.0007671551</code></pre>
+## 1 0.0007672692 0.0007671565</code></pre>
 <pre class="r"><code>mse.n_BMI1_5e_4</code></pre>
 <pre><code>##      naive  beta_EB beta_EB_scam beta_EB_prune beta_EB_df beta_FIQT beta_FIQT2
 ## 1 229.8537 69.28808     66.87483      64.62644   64.79601  71.98999   72.25604
 ##   beta_boot
-## 1   72.2453</code></pre>
+## 1  72.24543</code></pre>
 <p>These results are very similar to those above.</p>
 <p><br></p>
 </div>
@@ -580,19 +599,19 @@ out_EB_prune &lt;- summary_data</code></pre>
 <pre><code>##        naive      beta_EB beta_EB_scam   beta_EB_df    beta_FIQT   beta_FIQT2
 ## 1 0.00148166 0.0005797177 0.0005773651 0.0007660964 0.0004961687 0.0005553746
 ##      beta_boot
-## 1 0.0005749085</code></pre>
+## 1 0.0005615798</code></pre>
 <pre class="r"><code>mse.n_BMI2</code></pre>
 <pre><code>##      naive  beta_EB beta_EB_scam beta_EB_df beta_FIQT beta_FIQT2 beta_boot
-## 1 11.78067 4.609336      4.59063   6.091233  3.945037   4.415783  4.571097</code></pre>
+## 1 11.78067 4.609336      4.59063   6.091233  3.945037   4.415783  4.465121</code></pre>
 <p>There is a slight contrast to our results for <strong>BMI GWAS 1</strong> here. Both adaptations have not significantly improved the empirical Bayes method, with the fixing of the degrees of freedom actually increasing the <code>mse</code> value. The change to FDR IQT continues to perform poorly in comparison to the original definition of the method in which it doesn’t adjust the estimated effect sizes of SNPs with very small <span class="math inline">\(p\)</span>-values, i.e. &lt; <code>1e-15</code>.</p>
 <pre class="r"><code>mse_BMI2_5e_4</code></pre>
 <pre><code>##         naive      beta_EB beta_EB_scam   beta_EB_df    beta_FIQT   beta_FIQT2
 ## 1 0.002889462 0.0008535473 0.0007666839 0.0007868989 0.0008686253 0.0008734117
-##      beta_boot
-## 1 0.0008853462</code></pre>
+##     beta_boot
+## 1 0.000876333</code></pre>
 <pre class="r"><code>mse.n_BMI2_5e_4</code></pre>
 <pre><code>##      naive  beta_EB beta_EB_scam beta_EB_df beta_FIQT beta_FIQT2 beta_boot
-## 1 284.1814 83.94723     75.40412    77.3923  85.43016   85.90091  87.07468</code></pre>
+## 1 284.1814 83.94723     75.40412    77.3923  85.43016   85.90091  86.18823</code></pre>
 <p>At this threshold, we do see that both modifications that we have made to the empirical Bayes method have resulted in improving the performance with respect to <code>mse</code>.</p>
 <p><br></p>
 </div>
@@ -602,19 +621,19 @@ out_EB_prune &lt;- summary_data</code></pre>
 <pre><code>##         naive    beta_EB beta_EB_scam  beta_EB_df  beta_FIQT beta_FIQT2
 ## 1 0.006411446 0.02353532  0.007192436 0.007009089 0.02127989  0.0239017
 ##    beta_boot
-## 1 0.02251936</code></pre>
+## 1 0.02150008</code></pre>
 <pre class="r"><code>mse.n_T2D1</code></pre>
 <pre><code>##       naive   beta_EB beta_EB_scam beta_EB_df beta_FIQT beta_FIQT2 beta_boot
-## 1 0.1987548 0.7295949    0.2229655  0.2172817 0.6596767  0.7409526 0.6981001</code></pre>
+## 1 0.1987548 0.7295949    0.2229655  0.2172817 0.6596767  0.7409526 0.6665026</code></pre>
 <p>Recall that this GWAS is one in which we witness that most of the significant SNPs at the <code>5e-8</code> threshold have estimated effect sizes that are in <em>greater</em> in the replication GWAS than in the discovery. For this reason, we still see that the <code>naive</code> approach has the smallest value here. That said, we see that the two modifications we have made to the empirical Bayes methods have <code>mse</code> values much closer to that of the <code>naive</code> approach.</p>
 <pre class="r"><code>mse_T2D1_5e_4</code></pre>
 <pre><code>##        naive     beta_EB beta_EB_scam  beta_EB_df   beta_FIQT  beta_FIQT2
 ## 1 0.08836548 0.004775477  0.003274817 0.003798693 0.004449678 0.004463614
-##    beta_boot
-## 1 0.01271157</code></pre>
+##   beta_boot
+## 1 0.0125431</code></pre>
 <pre class="r"><code>mse.n_T2D1_5e_4</code></pre>
 <pre><code>##      naive  beta_EB beta_EB_scam beta_EB_df beta_FIQT beta_FIQT2 beta_boot
-## 1 515.3475 27.85058     19.09873   22.15398  25.95052    26.0318  74.13388</code></pre>
+## 1 515.3475 27.85058     19.09873   22.15398  25.95052    26.0318  73.15137</code></pre>
 <p>We continue to see similar results in which the values of <code>beta_EB_df</code> and <code>beta_EB_scam</code> are the two lowest while <code>beta_FIQT2</code> is larger than that of its predecessor, <code>beta_FIQT</code>.</p>
 <p><br></p>
 </div>
@@ -624,19 +643,19 @@ out_EB_prune &lt;- summary_data</code></pre>
 <pre><code>##         naive     beta_EB beta_EB_scam  beta_EB_df    beta_FIQT   beta_FIQT2
 ## 1 0.003579806 0.003709755  0.002520587 0.002512997 0.0006299248 -0.001279366
 ##       beta_boot
-## 1 -0.0005811105</code></pre>
+## 1 -0.0008015779</code></pre>
 <pre class="r"><code>mse.n_T2D2</code></pre>
-<pre><code>##       naive   beta_EB beta_EB_scam beta_EB_df  beta_FIQT beta_FIQT2  beta_boot
-## 1 0.2720652 0.2819414    0.1915646  0.1909878 0.04787428 -0.0972318 -0.0441644</code></pre>
+<pre><code>##       naive   beta_EB beta_EB_scam beta_EB_df  beta_FIQT beta_FIQT2   beta_boot
+## 1 0.2720652 0.2819414    0.1915646  0.1909878 0.04787428 -0.0972318 -0.06091992</code></pre>
 <p>The results here are not as straightforward as above. We still see that improvements have been made to the <code>mse</code> value of the original empirical Bayes method with the values of <code>beta_EB_scam</code> and <code>beta_EB_df</code> now below that of the <code>naive</code> approach. However, the adaptation to FDR IQT has now resulted in an improved performance.</p>
 <pre class="r"><code>mse_T2D2_5e_4</code></pre>
 <pre><code>##       naive    beta_EB beta_EB_scam  beta_EB_df   beta_FIQT  beta_FIQT2
 ## 1 0.1036094 0.00851429  0.008333916 0.008619009 0.007839031 0.007812682
 ##    beta_boot
-## 1 0.01790411</code></pre>
+## 1 0.01784325</code></pre>
 <pre class="r"><code>mse.n_T2D2_5e_4</code></pre>
 <pre><code>##      naive beta_EB beta_EB_scam beta_EB_df beta_FIQT beta_FIQT2 beta_boot
-## 1 570.5772 46.8882     45.89488   47.46488  43.16954   43.02444  98.59793</code></pre>
+## 1 570.5772 46.8882     45.89488   47.46488  43.16954   43.02444  98.26277</code></pre>
 <p>If we analyse the plot above that depicted <code>mse</code> vs degrees of freedom at this threshold of <code>5e-4</code>, the slightly larger <code>mse</code> value of <code>beta_EB_df</code> comes as no surprise here. Encouragingly, all methods are performing considerably better than the <code>naive</code> approach, but FDR IQT seems to be doing better than any variation of the empirical Bayes method.</p>
 </div>
 </div>
