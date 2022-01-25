@@ -780,7 +780,7 @@ We expect this graph of `log_f` to be smooth. However, it demonstrates particula
 diff <- diff(log_f)/diff(mids)
 
 ## plot diff
-plot(diff, main="BMI GWAS 1", col.main=col[1]) + abline(h=0)
+plot(diff, main="BMI GWAS 1", col.main=col[1])
 ```
 
 In the above plot, we generally expect that `diff` would be positive to the left and then become negative. However, this doesn't seem to be the case here at all. This serious issue is then translated into the adjustments made to the association estimates and is responsible for the method failing to adjust certain estimates. 
@@ -860,13 +860,13 @@ diff_T2D_2 <- diff(log_f)/diff(mids)
 par(mfrow=c(1,3)) 
 
 ## plot diff bmi 2
-plot(diff_bmi_2, main="BMI GWAS 2", col.main = col[2]) + abline(h=0)
+plot(diff_bmi_2, main="BMI GWAS 2", col.main = col[2]) 
 
 ## plot diff bmi 2
-plot(diff_T2D_1, main="T2D GWAS 1", col.main = col[3]) + abline(h=0)
+plot(diff_T2D_1, main="T2D GWAS 1", col.main = col[3]) 
 
 ## plot diff bmi 2
-plot(diff_T2D_2, main ="T2D GWAS 2", col.main = col[4]) + abline(h=0)
+plot(diff_T2D_2, main ="T2D GWAS 2", col.main = col[4]) 
 
 ```
 
@@ -891,7 +891,7 @@ f2 <- scam(counts[mids < 0] ~ s(mids[mids < 0], bs="mpi"), family = poisson(link
 f <- c(f2,f1)
 log_f <- as.vector(log(f))
 diff <- diff(log_f)/diff(mids)
-plot(diff, main="BMI GWAS 1", col.main=col[1]) + abline(h=0)
+plot(diff, main="BMI GWAS 1", col.main=col[1]) 
 ```
 
 
@@ -947,13 +947,13 @@ diff_T2D_2 <- diff(log_f)/diff(mids)
 par(mfrow=c(1,3)) 
 
 ## plot diff bmi 2
-plot(diff_bmi_2, main="BMI GWAS 2", col.main = col[2]) + abline(h=0)
+plot(diff_bmi_2, main="BMI GWAS 2", col.main = col[2]) 
 
 ## plot diff bmi 2
-plot(diff_T2D_1, main="T2D GWAS 1", col.main = col[3]) + abline(h=0)
+plot(diff_T2D_1, main="T2D GWAS 1", col.main = col[3]) 
 
 ## plot diff bmi 2
-plot(diff_T2D_2, main ="T2D GWAS 2", col.main = col[4]) + abline(h=0)
+plot(diff_T2D_2, main ="T2D GWAS 2", col.main = col[4]) 
 
 ```
 
@@ -1028,7 +1028,7 @@ f <- stats::glm(counts ~ splines::ns(mids,knots = (seq(from=boundary_lower,to=bo
 f[f==0] <- min(f[f>0])
 log_f <- as.vector(log(f))
 diff <- diff(log_f)/diff(mids)
-plot(diff, main="BMI GWAS 1", col.main=col[1]) + abline(h=0)
+plot(diff, main="BMI GWAS 1", col.main=col[1]) 
 ```
 
 
@@ -1259,7 +1259,7 @@ knitr::include_graphics("images/EB_df_mse_5e_4.png")
 
 
 
-Thus, based on this empirical analysis of real data sets, it seems appropriate to suggest using a pre-specificed value of 6 for the degrees of freedom. In `winnerscurse` package, using `èmpirical_bayes()` we can set `AIC=FALSE`. Below, we will see what this adaptation means for us in terms of our chosen evaluation metrics. 
+Thus, based on this empirical analysis of real data sets, it seems appropriate to suggest using a pre-specified value for the degrees of freedom. It was suggested by Efron [2009] that 7 degrees of freedom should be used and therefore, based on his paper and our above results, we decide to fix the degrees of freeedom at 7 instead of used the AIC approach. In `winnerscurse` package, using `èmpirical_bayes()` we can set `AIC=FALSE`. This perhaps should be the most commonly employed approach when applying the empirical Bayes method to real data sets unless the researcher is certain that there is a minimal degree of LD in their array. Below, we will see what this adaptation means for us in terms of our chosen evaluation metrics. 
 
 
 
@@ -1314,7 +1314,7 @@ mse.n_BMI1
 ```
 
 
-Here, we see that our three suggested improvements on the original empirical Bayes method have performed better, with the one in which we have fixed the degrees of freedom to 6 having the lowest `mse` value. We note that the adaptation to FDR IQT is performing worse than it does in its original form. This is most likely due to some SNPs undergoing over-reductions in their estimated effect sizes.
+Here, we see that our three suggested improvements on the original empirical Bayes method have performed better, with the one in which we have fixed the degrees of freedom to 7 having the lowest `mse` value. We note that the adaptation to FDR IQT is performing worse than it does in its original form. This is most likely due to some SNPs undergoing over-reductions in their estimated effect sizes.
 
 
 Using the greater threshold of `5e-4`, we obtain the following: 
@@ -1343,7 +1343,7 @@ mse_BMI1_5e_4
 mse.n_BMI1_5e_4
 ```
 
-These results are very similar to those above but with `empirical_bayes_scam` performing slightly better this time. 
+These results are very similar to those above. 
 
 <br> 
 
@@ -1388,7 +1388,7 @@ mse.n_BMI2
 ```
 
 
-We witness similar results to those for **BMI GWAS 1**. Both adaptations have improved the empirical Bayes method, but with the fixing of the degrees of freedom being the clear winner here with the lowest value. Also, the change to FDR IQT continues to perform poorly in comparison to the original definition of the method in which it doesn't adjust the estimated effect sizes of SNPs with very small $p$-values, i.e. < `1e-15`.
+There is a slight contrast to our results for **BMI GWAS 1** here. Both adaptations have not significantly improved the empirical Bayes method, with the fixing of the degrees of freedom actually increasing the `mse` value. The change to FDR IQT continues to perform poorly in comparison to the original definition of the method in which it doesn't adjust the estimated effect sizes of SNPs with very small $p$-values, i.e. < `1e-15`.
 
 
  
@@ -1417,7 +1417,7 @@ mse.n_BMI2_5e_4
 ```
 
 
-This second set of results support the observations we have made above. 
+At this threshold, we do see that both modifications that we have made to the empirical Bayes method have resulted in improving the performance with respect to `mse`.
 
 <br>
 
@@ -1560,6 +1560,6 @@ mse.n_T2D2_5e_4
 ```
 
 
-If we analyse the plot above that depicted `mse` vs degrees of freedom at this threshold of `5e-4`, the larger `mse` value of `beta_EB_df` comes as no surprise here. Encouragingly, all methods are performing considerably better than the `naive` approach, but FDR IQT seems to be doing better than any variation of the empirical Bayes method. 
+If we analyse the plot above that depicted `mse` vs degrees of freedom at this threshold of `5e-4`, the slightly larger `mse` value of `beta_EB_df` comes as no surprise here. Encouragingly, all methods are performing considerably better than the `naive` approach, but FDR IQT seems to be doing better than any variation of the empirical Bayes method. 
 
 
