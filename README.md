@@ -7,6 +7,8 @@ Details of all current progress to date, together with illustrations of results,
 
 Our work began from a point in which appropriate quality control procedures had already been performed on UKBB genotype data and we had access to BMI information for 502,554 individuals and T2D status for 502,524 individuals. Description of the scripts used in our workflow is included below. 
 
+**Note:** We have also included work completed with a third UKBB dataset which contained height measurements. The procedure followed in order to obtain two sets of summary statistics was identical to that used for the BMI dataset. 
+
 &nbsp;
 
 ## Generation of GWAS summary statistics for BMI 
