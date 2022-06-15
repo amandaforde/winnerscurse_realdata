@@ -108,6 +108,7 @@ pass a threshold of `5e-4` are highlighted in
 summary_data_bmi_1 <-  read.table('data/summary_data_bmi_1.txt',header=TRUE)
 ```
 
+
 ```{r, echo=FALSE, eval=FALSE}
 out <- summary_data_bmi_1
 out$bias <- out$beta - out$beta_rep
@@ -2476,19 +2477,25 @@ the `scam()` function has the lowest value here.
 ## Summary
 
 The results from comparing all mentioned forms of the different Winner's
-Curse correction methods can be summarised in a visual manner with the
-plots below.
+Curse correction methods can be summarised with the tables below and in visual manner with the
+plots.
 
-```{r, echo=FALSE, fig.height=4}
+```{r, echo=FALSE}
 
-par(mfrow=c(1,2))
+mse_BMI <- rbind(mse_BMI1,mse_BMI2, mse_T2D1, mse_T2D2, mse_height1, mse_height2)
+mse_BMI <- round(mse_BMI[,1:11],5)
+
+GWAS <- c("BMI 1", "BMI 2", "T2D 1", "T2D 2", "Height 1", "Height 2")
+mse_BMI <- cbind(GWAS,mse_BMI)
+
+print(mse_BMI)
 
 library(RColorBrewer)
 
 col <- brewer.pal(8,"Dark2")
 col1 <- brewer.pal(11,"RdYlBu")
 
-methods <- c("naive","CL1","CL2","CL3","EB","EB_df","EB_gam_po", "EB_gam_nb","EB_scam","boot","FIQT","FIQT2")
+methods <- c("naive","CL1","CL2","CL3","EB","EB_df","EB_scam","EB_gam_po", "EB_gam_nb","boot","FIQT","FIQT2")
 GWAS <- c(rep("BMI GWAS 1",12), rep("BMI GWAS 2",12), rep("T2D GWAS 1",12), rep("T2D GWAS 2",12), rep("Height GWAS 1",12), rep("Height GWAS 2",12))
 
 mse_5e_8 <- c(as.numeric(mse_BMI1[1,]), as.numeric(mse_BMI2[1,]), as.numeric(mse_T2D1[1,]), as.numeric(mse_T2D2[1,]), as.numeric(mse_height1[1,]), as.numeric(mse_height2[1,]))
@@ -2498,54 +2505,28 @@ rmse_5e_4 <- c(as.numeric(rmse_BMI1_5e_4[1,]), as.numeric(rmse_BMI2_5e_4[1,]), a
 
 summary <- data.frame(GWAS = GWAS, methods=rep(methods,6), mse_5e_8=mse_5e_8, mse_5e_4 = mse_5e_4, rmse_5e_8=rmse_5e_8, rmse_5e_4 = rmse_5e_4)
 
+summary <- summary[summary$methods != "FIQT2", ]
 ## BMI 5e-8
-ggplot(summary[1:24,],aes(x=methods,y=mse_5e_8,colour=methods)) + geom_point(position=position_dodge(0.8),size=4.5,aes(shape=methods, color=methods))+ facet_wrap(GWAS~.,ncol=3) + scale_shape_manual(values=c(6,20,20,20,18,18,18,18,18,10,10,15)) + scale_color_manual(values=c(col[1],col[2],col[8],col[4],col[5],col[3],col[6],col[7],col1[1],col1[11],col1[3],col1[9])) + xlab("Method") + 
+ggplot(summary,aes(x=methods,y=mse_5e_8,fill=methods)) + geom_bar(stat="identity")+ geom_col(width=1) + facet_wrap(GWAS~.,ncol=6) + scale_shape_manual(values=c(6,20,20,20,15,18,18,18,18,10,15)) + scale_fill_manual(values=c(col[1],col[2],col[8],col[4],col[5],col[3],col[6],col[7],col1[1],col1[11],col1[9])) + xlab("Method") + 
    ylab(expression(paste(italic("Estimated"), " mse at 5e-8"))) + theme_bw() +
   theme(axis.text.x=element_blank(), #remove x axis labels
         axis.ticks.x=element_blank()
-        ) + theme(legend.title = element_blank(),legend.box.background = element_rect(colour = "black"),legend.spacing.y = unit(0, "mm"), legend.background=element_blank()) 
+        ) + theme(legend.title = element_blank(),legend.box.background = element_rect(colour = "black"),panel.grid.major = element_blank(), panel.grid.minor = element_blank(),legend.spacing.y = unit(0, "mm"), legend.background=element_blank()) + geom_hline(data = summary[summary$methods=="naive",], aes(yintercept = mse_5e_8), linetype=2, lwd=0.75) + geom_hline(yintercept=0)
 
 
-## T2D 5e-8
+mse <- rbind(mse_BMI1_5e_4,mse_BMI2_5e_4, mse_T2D1_5e_4, mse_T2D2_5e_4, mse_height1_5e_4, mse_height2_5e_4)
+mse <- round(mse[,1:11],5)
 
-ggplot(summary[25:48,],aes(x=methods,y=mse_5e_8,colour=methods)) + geom_point(position=position_dodge(0.8),size=4.5,aes(shape=methods, color=methods))+ facet_wrap(GWAS~.,ncol=3) + scale_shape_manual(values=c(6,20,20,20,18,18,18,18,18,10,10,15)) + scale_color_manual(values=c(col[1],col[2],col[8],col[4],col[5],col[3],col[6],col[7],col1[1],col1[11],col1[3],col1[9])) + xlab("Method") + 
-   ylab(expression(paste(italic("Estimated"), " mse at 5e-8"))) + theme_bw() +
-  theme(axis.text.x=element_blank(), #remove x axis labels
-        axis.ticks.x=element_blank()
-        ) + theme(legend.title = element_blank(),legend.box.background = element_rect(colour = "black"),legend.spacing.y = unit(0, "mm"), legend.background=element_blank()) 
+GWAS <- c("BMI 1", "BMI 2", "T2D 1", "T2D 2", "Height 1", "Height 2")
+mse <- cbind(GWAS,mse)
 
-## Height 5e-8
-
-ggplot(summary[49:72,],aes(x=methods,y=mse_5e_8,colour=methods)) + geom_point(position=position_dodge(0.8),size=4.5,aes(shape=methods, color=methods))+ facet_wrap(GWAS~.,ncol=3) + scale_shape_manual(values=c(6,20,20,20,18,18,18,18,18,10,10,15)) + scale_color_manual(values=c(col[1],col[2],col[8],col[4],col[5],col[3],col[6],col[7],col1[1],col1[11],col1[3],col1[9])) + xlab("Method") + 
-   ylab(expression(paste(italic("Estimated"), " mse at 5e-8"))) + theme_bw() +
-  theme(axis.text.x=element_blank(), #remove x axis labels
-        axis.ticks.x=element_blank()
-        ) + theme(legend.title = element_blank(),legend.box.background = element_rect(colour = "black"),legend.spacing.y = unit(0, "mm"), legend.background=element_blank())
+print(mse)
 
 
-## BMI 5e-4
-ggplot(summary[1:24,],aes(x=methods,y=mse_5e_4,colour=methods)) + geom_point(position=position_dodge(0.8),size=4.5,aes(shape=methods, color=methods))+ facet_wrap(GWAS~.,ncol=3) + scale_shape_manual(values=c(6,20,20,20,18,18,18,18,18,10,10,15)) + scale_color_manual(values=c(col[1],col[2],col[8],col[4],col[5],col[3],col[6],col[7],col1[1],col1[11],col1[3],col1[9])) + xlab("Method") + 
+ggplot(summary,aes(x=methods,y=mse_5e_4,fill=methods)) + geom_bar(stat="identity")+ geom_col(width=1) + facet_wrap(GWAS~.,ncol=6) + scale_shape_manual(values=c(6,20,20,20,15,18,18,18,18,10,15)) + scale_fill_manual(values=c(col[1],col[2],col[8],col[4],col[5],col[3],col[6],col[7],col1[1],col1[11],col1[9])) + xlab("Method") + 
    ylab(expression(paste(italic("Estimated"), " mse at 5e-4"))) + theme_bw() +
   theme(axis.text.x=element_blank(), #remove x axis labels
         axis.ticks.x=element_blank()
-        ) + theme(legend.title = element_blank(),legend.box.background = element_rect(colour = "black"),legend.spacing.y = unit(0, "mm"), legend.background=element_blank()) 
-
-
-## T2D 5e-4
-
-ggplot(summary[25:48,],aes(x=methods,y=mse_5e_4,colour=methods)) + geom_point(position=position_dodge(0.8),size=4.5,aes(shape=methods, color=methods))+ facet_wrap(GWAS~.,ncol=3) + scale_shape_manual(values=c(6,20,20,20,18,18,18,18,18,10,10,15)) + scale_color_manual(values=c(col[1],col[2],col[8],col[4],col[5],col[3],col[6],col[7],col1[1],col1[11],col1[3],col1[9])) + xlab("Method") + 
-   ylab(expression(paste(italic("Estimated"), " mse at 5e-4"))) + theme_bw() +
-  theme(axis.text.x=element_blank(), #remove x axis labels
-        axis.ticks.x=element_blank()
-        ) + theme(legend.title = element_blank(),legend.box.background = element_rect(colour = "black"),legend.spacing.y = unit(0, "mm"), legend.background=element_blank()) 
-
-## Height 5e-4
-
-ggplot(summary[49:72,],aes(x=methods,y=mse_5e_4,colour=methods)) + geom_point(position=position_dodge(0.8),size=4.5,aes(shape=methods, color=methods))+ facet_wrap(GWAS~.,ncol=3) + scale_shape_manual(values=c(6,20,20,20,18,18,18,18,18,10,10,15)) + scale_color_manual(values=c(col[1],col[2],col[8],col[4],col[5],col[3],col[6],col[7],col1[1],col1[11],col1[3],col1[9])) + xlab("Method") + 
-   ylab(expression(paste(italic("Estimated"), " mse at 5e-4"))) + theme_bw() +
-  theme(axis.text.x=element_blank(), #remove x axis labels
-        axis.ticks.x=element_blank()
-        ) + theme(legend.title = element_blank(),legend.box.background = element_rect(colour = "black"),legend.spacing.y = unit(0, "mm"), legend.background=element_blank())
-
+        ) + theme(legend.title = element_blank(),legend.box.background = element_rect(colour = "black"),panel.grid.major = element_blank(), panel.grid.minor = element_blank(),legend.spacing.y = unit(0, "mm"), legend.background=element_blank()) + geom_hline(data = summary[summary$methods=="naive",], aes(yintercept = mse_5e_4), linetype=2, lwd=0.75) + geom_hline(yintercept=0)
 
 ```
