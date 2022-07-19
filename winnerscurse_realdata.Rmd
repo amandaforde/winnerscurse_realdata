@@ -125,6 +125,19 @@ geom_vline(xintercept=qnorm(1-(5e-4)/2), colour="darkred", linetype="dashed",siz
   )
 ```
 
+```{r, echo=FALSE, eval=FALSE}
+out <- summary_data_bmi_1
+out$z <- out$beta/out$se
+ggplot(out,aes(x=z)) + geom_density() + xlab("z") + ggtitle("BMI GWAS 1") +  theme_classic() + geom_vline(xintercept=qnorm(1-(5e-8)/2), colour="red", linetype="dashed",size=1) + geom_vline(xintercept=-qnorm(1-(5e-8)/2), colour="red", linetype="dashed",size=1) +
+geom_vline(xintercept=qnorm(1-(5e-4)/2), colour="darkred", linetype="dashed",size=1) + geom_vline(xintercept=-qnorm(1-(5e-4)/2), colour="darkred", linetype="dashed",size=1) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face="bold", colour=col[1]),
+  )
+```
+
+
+
+
 ```{r, echo=FALSE, out.width = '80%'}
 knitr::include_graphics("images/BMI1_z_bias_sig.png")
 ```
@@ -936,6 +949,7 @@ FDR_IQT2 <- function(summary_data, min_pval=1e-15){
   }
   beta_FIQT <- sign(summary_data$beta)*adjusted$adj_z*summary_data$se
   summary_data <- cbind(summary_data,beta_FIQT)
+  summary_data <- dplyr::arrange(summary_data,dplyr::desc(abs(summary_data$beta/summary_data$se)))
   return(summary_data)
 }
 ```
