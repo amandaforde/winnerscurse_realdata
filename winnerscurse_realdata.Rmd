@@ -839,7 +839,7 @@ estimated effect sizes of the top significant SNPs.
 
 We compute `mse` and `mse.n`:
 
-```{r, echo=FALSE}
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
 summary_data_T2D_2 <- dplyr::arrange(summary_data_T2D_2,dplyr::desc(abs(summary_data_T2D_2$beta/summary_data_T2D_2$se)))
 z <- summary_data_T2D_2$beta/summary_data_T2D_2$se
 p_val <- 2*(1-stats::pnorm(abs(z)))
@@ -849,13 +849,13 @@ true_beta <- summary_data_sig_T2D_2$beta_rep ## need this to be in the same orde
 
 mse_T2D2 <- data.frame(naive = mean((true_beta - out_CL$beta)^2) - mean(out_EB_sig$se^2), beta.cl1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2),  beta.cl2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2),  beta.cl3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), beta_EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2), beta_FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), beta_boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2))
 
-rmse_T2D2 <- data.frame(naive = sqrt(mean((true_beta - out_CL$beta)^2) - mean(out_EB_sig$se^2)), beta.cl1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)),  beta.cl2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)),  beta.cl3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), beta_EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), beta_FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)), beta_boot = sqrt(abs(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2))))
+rmse_T2D2 <- data.frame(naive = sqrt(mean((true_beta - out_CL$beta)^2) - mean(out_EB_sig$se^2)), beta.cl1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)),  beta.cl2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)),  beta.cl3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), beta_EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), beta_FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)), beta_boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)))
 
 mse.n_T2D2 <- data.frame(naive = sum((true_beta - out_CL$beta)^2) - sum(out_EB_sig$se^2), beta.cl1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2),  beta.cl2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2),  beta.cl3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), beta_EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2), beta_FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), beta_boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2))
 
 ```
 
-```{r}
+```{r, warning=FALSE, message=FALSE}
 mse_T2D2
 
 rmse_T2D2
@@ -1844,7 +1844,7 @@ and `beta_EB_scam` are the two lowest.
 
 #### T2D GWAS 2
 
-```{r, echo=FALSE}
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
 
 summary_stats <- summary_data_T2D_2[,3:5]
  
@@ -1867,7 +1867,7 @@ out_BR_ss_sig <- out_BR_T2D2[2*(1-pnorm(abs(out_BR_T2D2$beta/out_BR_T2D2$se))) <
 
 ```
 
-```{r, echo=FALSE}
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
 true_beta <- summary_data_sig_T2D_2$beta_rep 
 
 mse_T2D2 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
@@ -1878,7 +1878,7 @@ mse.n_T2D2 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_
 
 ```
 
-```{r}
+```{r, warning=FALSE, message=FALSE}
 mse_T2D2
 
 rmse_T2D2
