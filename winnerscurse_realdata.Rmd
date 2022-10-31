@@ -908,57 +908,6 @@ us to attempt to understand why certain methods are not performing that
 well in certain circumstances and to see if improvements can be made so
 that better adjusted association estimates can be obtained.
 
-### FDR Inverse Quantile Transformation
-
-With respect to FDR Inverse Quantile Transformation, the explanation as
-to why we see unadjusted estimates is quite simple. The method
-definition contains the clause that if a certain SNP has a $p$-value
-which equates to 0 or indeed a $p$-value less than `1e-15`, then the
-association estimate of this SNP will not be adjusted. We consider if
-perhaps there exists a way in which we could obtain adjusted estimates
-for these SNPs with very small $p$-values or equivalently, very large
-$z$ and investigate what effect that would have on the method.
-
-It's possible to prove that for all $z > 0$, the following identity
-holds: $$P(N(0,1) > z) \le \frac{e^{\frac{-z^2}{2}}}{z\sqrt{2\pi}}$$
-However,
-$\frac{\frac{e^{\frac{-z^2}{2}}}{z\sqrt{2\pi}}}{P(N(0,1) > z)} \rightarrow 1$
-as $z \rightarrow \infty$, and therefore, we can in fact use the
-following as an approximation to $2 \times P(N(0,1) > |z|)$ for large
-$z$: $$2 \times \frac{e^{\frac{-|z|^2}{2}}}{|z|\sqrt{2\pi}}$$ Thus,
-using the above, we can make the following modification to the FDR
-Inverse Quantile Transformation method and rewrite the `FDR_IQT`
-function as:
-
-```{r}
-## An alternative form of FDR_IQT which ensures adjustments are made to SNPs which have very large z values
-FDR_IQT2 <- function(summary_data, min_pval=1e-15){
-  summary_data <- dplyr::arrange(summary_data,dplyr::desc(abs(summary_data$beta/summary_data$se)))
-  z <- summary_data$beta/summary_data$se
-  p_val <- 2*(1-stats::pnorm(abs(z)))
-  p_val[p_val < min_pval] <- 2*(exp(-abs(z[p_val < min_pval])^2/2)/(abs(z[p_val < min_pval])*sqrt(2*pi)))
-  adj_p <- stats::p.adjust(p_val, method="fdr")
-  adj_z <- stats::qnorm(1-(adj_p/2))
-  adjusted <- data.frame(adj_p,adj_z)
-  zz <- seq(from = 8, to = floor(max(z)) + 1, by = 0.0001)
-  p_vals <- 2*(exp(-abs(zz)^2/2)/(abs(zz)*sqrt(2*pi)))
-  for (i in 1:length(p_val[p_val < min_pval])){
-    if(adjusted$adj_z[i] == Inf){
-       adjusted$adj_z[i] <- zz[which.min(abs(p_vals - c(rep(adjusted$adj_p[i],length(p_vals)))))]
-    }
-  }
-  beta_FIQT <- sign(summary_data$beta)*adjusted$adj_z*summary_data$se
-  summary_data <- cbind(summary_data,beta_FIQT)
-  summary_data <- dplyr::arrange(summary_data,dplyr::desc(abs(summary_data$beta/summary_data$se)))
-  return(summary_data)
-}
-```
-
-This new version of FDR IQT is guaranteed to make adjustments to the
-estimated effect sizes of all significant SNPs. However, we will show
-later that this may not actually improve the evaluation metrics for FDR
-IQT as it can result in an over-reduction of several association
-estimates.
 
 ### Empirical Bayes
 
@@ -1317,65 +1266,6 @@ empirical_bayes_gam_nb <- function(summary_data){
 }
 ```
 
-#### Use of LD-pruned set of SNPs
-
-The next improvement we chose to investigate was to use an LD-pruned set
-of SNPs to establish our empirical Bayes rule, or equivalently, model
-the density of $z$-scores, and subsequently, make adjustments to all
-SNPs based on this.
-
-Due to time constraints we have only considered **BMI GWAS 1** here. The
-LD-pruned set of SNPs were produced using `linkdis_bmiA.sh`. Here, a
-window size of 50, step size of 5 and $R^2$ threshold of 0.5 were
-specified. This provided us with a total of 1,589,295 SNPs that are in
-approximate linkage equilibrium with each other.
-
-```{r, warning=FALSE}
-pruned_SNPs_bmi_1 <- read.table('data/pruned_SNPs_bmi_1.txt',header=TRUE)
-summary_data_sub <- summary_data_bmi_1[summary_data_bmi_1$rsid %in% pruned_SNPs_bmi_1$V1,]
-z <- summary_data_bmi_1$beta/summary_data_bmi_1$se
-z_sub <- summary_data_sub$beta/summary_data_sub$se
-bins <- seq(min(z_sub),max(z_sub),length.out=120) ## using z_sub - set of pruned SNPs
-mids <- (bins[-length(bins)]+bins[-1])/2
-counts <- graphics::hist(z_sub,breaks=bins,plot=F)$counts
-most_extreme <- 10  
-boundary_lower <- sort(z_sub)[most_extreme]
-boundary_upper <- sort(z_sub,decreasing=TRUE)[most_extreme]
-df <- 7
-AIC_vector <- c(rep(0,28))
-for (best_df in 3:30){
-    model <- stats::glm(counts ~ splines::ns(mids,knots = (seq(from=boundary_lower,to=boundary_upper,length=best_df+1)[2:best_df]), Boundary.knots=c(boundary_lower,boundary_upper)),stats::poisson,weights=rep(10^-50,length(counts)))
-    minus2loglike <- 10^50*(model$deviance)
-    AIC_vector[best_df-2] <- minus2loglike + 2*(best_df-2)
-  }
-df <- 2 + which.min(AIC_vector)
-f <- stats::glm(counts ~ splines::ns(mids,knots = (seq(from=boundary_lower,to=boundary_upper,length=df+1)[2:df]), Boundary.knots=c(boundary_lower,boundary_upper)),stats::poisson,weight=rep(10^-50,length(counts)))$fit
-f[f==0] <- min(f[f>0])
-log_f <- as.vector(log(f))
-diff <- diff(log_f)/diff(mids)
-plot(diff, main="BMI GWAS 1", col.main=col[1]) 
-```
-
-This `diff` plot is certainly better than the original. We see that all
-points to the left of the plot are greater than 0 while the majority of
-the points to the right of the plot are less than 0. The code below
-details how we may use the above and apply it to the full set of SNPs.
-
-```{r}
-mids2 <- (mids[-length(mids)]+mids[-1])/2
-diff_interpol <- stats::approx(mids2,diff,mids,rule=2,ties=mean)$y
-mids_est <- c(rep(0,length(mids)))
-mids_est[mids>0] <- pmax(0, mids[mids>0] + diff_interpol[mids>0])
-mids_est[mids<0] <- pmin(0, mids[mids<0] + diff_interpol[mids<0])
-z_hat <- stats::approx(mids,mids_est,z,rule=1,ties=mean)$y  ## using full set of z here 
-z_hat[is.na(z_hat) & z > 0] <-  z[is.na(z_hat) & z > 0] +   diff_interpol[length(diff_interpol)]
-z_hat[is.na(z_hat) & z < 0] <-  z[is.na(z_hat) & z < 0] + diff_interpol[1]
-z_hat <- sign(z)*pmin(abs(z),abs(z_hat))
-beta_EB <- z_hat*summary_data_bmi_1$se
-summary_data <- cbind(summary_data_bmi_1[,3:5],beta_EB)
-summary_data <- dplyr::arrange(summary_data,dplyr::desc(abs(summary_data$beta/summary_data$se)))
-out_EB_prune <- summary_data
-```
 
 #### Fixing the degrees of freedom
 
@@ -1673,11 +1563,10 @@ terms of our chosen evaluation metrics.
 
 ### Re-evaluating methods
 
-We have suggested an alternative form for FDR Inverse Quantile
-Transformation as well as several modifications that could be made to
+We have suggested several modifications that could be made to
 the empirical Bayes approach. In order to evaluate if these changes
-improve the methods, we repeat what we have done above in terms of
-computing two defined metrics, `mse` and `mse.n`.
+improve the method, we repeat what we have done above in terms of
+computing three defined metrics, `mse`, `rmse` and `mse.n`.
 
 #### BMI GWAS 1
 
@@ -1695,7 +1584,7 @@ out_EB_scam <- empirical_bayes(summary_data=summary_stats,method="scam")
 out_EB_gam_po <- empirical_bayes(summary_data=summary_stats,method="gam_po")
 out_EB_gam_nb <- empirical_bayes(summary_data=summary_stats,method="gam_nb")
 out_FIQT <- FDR_IQT(summary_data = summary_stats)
-out_FIQT2 <- FDR_IQT2(summary_data=summary_stats)
+
 
 out_EB_sig <- out_EB[2*(1-pnorm(abs(out_EB$beta/out_EB$se))) < 5e-8,]
 out_EB_df_sig <- out_EB_df[2*(1-pnorm(abs(out_EB_df$beta/out_EB_df$se))) < 5e-8,]
@@ -1704,7 +1593,6 @@ out_EB_gampo_sig <- out_EB_gam_po[2*(1-pnorm(abs(out_EB_gam_po$beta/out_EB_gam_p
 out_EB_gamnb_sig <- out_EB_gam_nb[2*(1-pnorm(abs(out_EB_gam_nb$beta/out_EB_gam_nb$se))) < 5e-8,]
 
 out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-8,]
-out_FIQT2_sig <- out_FIQT2[2*(1-pnorm(abs(out_FIQT2$beta/out_FIQT2$se))) < 5e-8,]
 out_BR_ss_sig <- out_BR_bmi1[2*(1-pnorm(abs(out_BR_bmi1$beta/out_BR_bmi1$se))) < 5e-8,]
 
 ```
@@ -1712,11 +1600,11 @@ out_BR_ss_sig <- out_BR_bmi1[2*(1-pnorm(abs(out_BR_bmi1$beta/out_BR_bmi1$se))) <
 ```{r, echo=FALSE}
 true_beta <- summary_data_sig_bmi_1$beta_rep 
 
-mse_BMI1 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), FIQT2 = mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
+mse_BMI1 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
 
-rmse_BMI1 <- data.frame(naive = sqrt(mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2)), CL1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)), CL2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)), CL3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)),  EB_df = sqrt(mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_scam = sqrt(mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_po = sqrt(mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_nb = sqrt(mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)), FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)), FIQT2 = sqrt(mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)))
+rmse_BMI1 <- data.frame(naive = sqrt(mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2)), CL1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)), CL2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)), CL3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)),  EB_df = sqrt(mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_scam = sqrt(mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_po = sqrt(mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_nb = sqrt(mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)), FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)))
 
-mse.n_BMI1 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), CL1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2), CL2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2), CL3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2),  EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_po = sum((true_beta - out_EB_gampo_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_nb = sum((true_beta - out_EB_gamnb_sig$beta_EB)^2) - sum(out_EB_sig$se^2), boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2), FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), FIQT2 = sum((true_beta - out_FIQT2_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2))
+mse.n_BMI1 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), CL1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2), CL2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2), CL3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2),  EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_po = sum((true_beta - out_EB_gampo_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_nb = sum((true_beta - out_EB_gamnb_sig$beta_EB)^2) - sum(out_EB_sig$se^2), boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2), FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2))
 
 ```
 
@@ -1730,10 +1618,7 @@ mse.n_BMI1
 
 Here, we see that our three suggested improvements on the original
 empirical Bayes method have performed better, with the one in which we
-have fixed the degrees of freedom to 7 having the lowest `mse` value. We
-note that the adaptation to FDR IQT is performing worse than it does in
-its original form. This is most likely due to some SNPs undergoing
-over-reductions in their estimated effect sizes.
+have fixed the degrees of freedom to 7 having the lowest `mse` value. 
 
 Using the greater threshold of `5e-4`, we obtain the following:
 
@@ -1745,7 +1630,6 @@ out_EB_gampo_sig <- out_EB_gam_po[2*(1-pnorm(abs(out_EB_gam_po$beta/out_EB_gam_p
 out_EB_gamnb_sig <- out_EB_gam_nb[2*(1-pnorm(abs(out_EB_gam_nb$beta/out_EB_gam_nb$se))) < 5e-4,]
 
 out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-4,]
-out_FIQT2_sig <- out_FIQT2[2*(1-pnorm(abs(out_FIQT2$beta/out_FIQT2$se))) < 5e-4,]
 out_BR_ss_sig <- out_BR_bmi1[2*(1-pnorm(abs(out_BR_bmi1$beta/out_BR_bmi1$se))) < 5e-4,]
 
 
@@ -1755,11 +1639,11 @@ summary_data_sig2 <- summary_data_bmi_1[summary_data_bmi_1$p_val<5e-4,]
 true_beta <- summary_data_sig2$beta_rep
 
 
-mse_BMI1_5e_4 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), FIQT2 = mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
+mse_BMI1_5e_4 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
 
-rmse_BMI1_5e_4 <- data.frame(naive = sqrt(mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2)), CL1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)), CL2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)), CL3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)),  EB_df = sqrt(mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_scam = sqrt(mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_po = sqrt(mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_nb = sqrt(mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)), FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)), FIQT2 = sqrt(mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)))
+rmse_BMI1_5e_4 <- data.frame(naive = sqrt(mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2)), CL1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)), CL2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)), CL3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)),  EB_df = sqrt(mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_scam = sqrt(mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_po = sqrt(mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_nb = sqrt(mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)), FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)))
 
-mse.n_BMI1_5e_4 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), CL1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2), CL2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2), CL3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2),  EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_po = sum((true_beta - out_EB_gampo_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_nb = sum((true_beta - out_EB_gamnb_sig$beta_EB)^2) - sum(out_EB_sig$se^2), boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2), FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), FIQT2 = sum((true_beta - out_FIQT2_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2))
+mse.n_BMI1_5e_4 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), CL1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2), CL2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2), CL3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2),  EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_po = sum((true_beta - out_EB_gampo_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_nb = sum((true_beta - out_EB_gamnb_sig$beta_EB)^2) - sum(out_EB_sig$se^2), boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2), FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2))
 
 ```
 
@@ -1788,7 +1672,6 @@ out_EB_scam <- empirical_bayes(summary_data=summary_stats,method="scam")
 out_EB_gam_po <- empirical_bayes(summary_data=summary_stats,method="gam_po")
 out_EB_gam_nb <- empirical_bayes(summary_data=summary_stats,method="gam_nb")
 out_FIQT <- FDR_IQT(summary_data = summary_stats)
-out_FIQT2 <- FDR_IQT2(summary_data=summary_stats)
 
 out_EB_sig <- out_EB[2*(1-pnorm(abs(out_EB$beta/out_EB$se))) < 5e-8,]
 out_EB_df_sig <- out_EB_df[2*(1-pnorm(abs(out_EB_df$beta/out_EB_df$se))) < 5e-8,]
@@ -1797,7 +1680,6 @@ out_EB_gampo_sig <- out_EB_gam_po[2*(1-pnorm(abs(out_EB_gam_po$beta/out_EB_gam_p
 out_EB_gamnb_sig <- out_EB_gam_nb[2*(1-pnorm(abs(out_EB_gam_nb$beta/out_EB_gam_nb$se))) < 5e-8,]
 
 out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-8,]
-out_FIQT2_sig <- out_FIQT2[2*(1-pnorm(abs(out_FIQT2$beta/out_FIQT2$se))) < 5e-8,]
 out_BR_ss_sig <- out_BR_bmi2[2*(1-pnorm(abs(out_BR_bmi2$beta/out_BR_bmi2$se))) < 5e-8,]
 
 ```
@@ -1805,11 +1687,11 @@ out_BR_ss_sig <- out_BR_bmi2[2*(1-pnorm(abs(out_BR_bmi2$beta/out_BR_bmi2$se))) <
 ```{r, echo=FALSE}
 true_beta <- summary_data_sig_bmi_2$beta_rep 
 
-mse_BMI2 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), FIQT2 = mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
+mse_BMI2 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
 
-rmse_BMI2 <- data.frame(naive = sqrt(mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2)), CL1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)), CL2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)), CL3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)),  EB_df = sqrt(mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_scam = sqrt(mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_po = sqrt(mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_nb = sqrt(mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)), FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)), FIQT2 = sqrt(mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)))
+rmse_BMI2 <- data.frame(naive = sqrt(mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2)), CL1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)), CL2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)), CL3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)),  EB_df = sqrt(mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_scam = sqrt(mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_po = sqrt(mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_nb = sqrt(mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)), FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)))
 
-mse.n_BMI2 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), CL1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2), CL2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2), CL3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2),  EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_po = sum((true_beta - out_EB_gampo_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_nb = sum((true_beta - out_EB_gamnb_sig$beta_EB)^2) - sum(out_EB_sig$se^2), boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2), FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), FIQT2 = sum((true_beta - out_FIQT2_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2))
+mse.n_BMI2 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), CL1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2), CL2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2), CL3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2),  EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_po = sum((true_beta - out_EB_gampo_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_nb = sum((true_beta - out_EB_gamnb_sig$beta_EB)^2) - sum(out_EB_sig$se^2), boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2), FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2))
 
 ```
 
@@ -1824,10 +1706,7 @@ mse.n_BMI2
 There is a slight contrast to our results for **BMI GWAS 1** here. Both
 adaptations have not significantly improved the empirical Bayes method,
 with the fixing of the degrees of freedom actually increasing the `mse`
-value. The change to FDR IQT continues to perform poorly in comparison
-to the original definition of the method in which it doesn't adjust the
-estimated effect sizes of SNPs with very small $p$-values, i.e. \<
-`1e-15`.
+value. 
 
 ```{r, echo=FALSE}
 
@@ -1842,18 +1721,17 @@ out_EB_gampo_sig <- out_EB_gam_po[2*(1-pnorm(abs(out_EB_gam_po$beta/out_EB_gam_p
 out_EB_gamnb_sig <- out_EB_gam_nb[2*(1-pnorm(abs(out_EB_gam_nb$beta/out_EB_gam_nb$se))) < 5e-4,]
 
 out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-4,]
-out_FIQT2_sig <- out_FIQT2[2*(1-pnorm(abs(out_FIQT2$beta/out_FIQT2$se))) < 5e-4,]
 out_BR_ss_sig <- out_BR_bmi2[2*(1-pnorm(abs(out_BR_bmi2$beta/out_BR_bmi2$se))) < 5e-4,]
 
 
 out_CL <- conditional_likelihood(summary_data = summary_stats, alpha=5e-4)
 
 
-mse_BMI2_5e_4 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), FIQT2 = mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
+mse_BMI2_5e_4 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
 
-rmse_BMI2_5e_4 <- data.frame(naive = sqrt(mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2)), CL1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)), CL2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)), CL3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)),  EB_df = sqrt(mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_scam = sqrt(mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_po = sqrt(mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_nb = sqrt(mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)), FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)), FIQT2 = sqrt(mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)))
+rmse_BMI2_5e_4 <- data.frame(naive = sqrt(mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2)), CL1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)), CL2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)), CL3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)),  EB_df = sqrt(mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_scam = sqrt(mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_po = sqrt(mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_nb = sqrt(mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)), FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)))
 
-mse.n_BMI2_5e_4 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), CL1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2), CL2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2), CL3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2),  EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_po = sum((true_beta - out_EB_gampo_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_nb = sum((true_beta - out_EB_gamnb_sig$beta_EB)^2) - sum(out_EB_sig$se^2), boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2), FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), FIQT2 = sum((true_beta - out_FIQT2_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2))
+mse.n_BMI2_5e_4 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), CL1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2), CL2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2), CL3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2),  EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_po = sum((true_beta - out_EB_gampo_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_nb = sum((true_beta - out_EB_gamnb_sig$beta_EB)^2) - sum(out_EB_sig$se^2), boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2), FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2))
 
 ```
 
@@ -1884,7 +1762,6 @@ out_EB_scam <- empirical_bayes(summary_data=summary_stats,method="scam")
 out_EB_gam_po <- empirical_bayes(summary_data=summary_stats,method="gam_po")
 out_EB_gam_nb <- empirical_bayes(summary_data=summary_stats,method="gam_nb")
 out_FIQT <- FDR_IQT(summary_data = summary_stats)
-out_FIQT2 <- FDR_IQT2(summary_data=summary_stats)
 
 out_EB_sig <- out_EB[2*(1-pnorm(abs(out_EB$beta/out_EB$se))) < 5e-8,]
 out_EB_df_sig <- out_EB_df[2*(1-pnorm(abs(out_EB_df$beta/out_EB_df$se))) < 5e-8,]
@@ -1893,7 +1770,6 @@ out_EB_gampo_sig <- out_EB_gam_po[2*(1-pnorm(abs(out_EB_gam_po$beta/out_EB_gam_p
 out_EB_gamnb_sig <- out_EB_gam_nb[2*(1-pnorm(abs(out_EB_gam_nb$beta/out_EB_gam_nb$se))) < 5e-8,]
 
 out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-8,]
-out_FIQT2_sig <- out_FIQT2[2*(1-pnorm(abs(out_FIQT2$beta/out_FIQT2$se))) < 5e-8,]
 out_BR_ss_sig <- out_BR_T2D1[2*(1-pnorm(abs(out_BR_T2D1$beta/out_BR_T2D1$se))) < 5e-8,]
 
 ```
@@ -1901,11 +1777,11 @@ out_BR_ss_sig <- out_BR_T2D1[2*(1-pnorm(abs(out_BR_T2D1$beta/out_BR_T2D1$se))) <
 ```{r, echo=FALSE}
 true_beta <- summary_data_sig_T2D_1$beta_rep 
 
-mse_T2D1 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), FIQT2 = mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
+mse_T2D1 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
 
-rmse_T2D1 <- data.frame(naive = sqrt(mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2)), CL1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)), CL2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)), CL3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)),  EB_df = sqrt(mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_scam = sqrt(mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_po = sqrt(mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_nb = sqrt(mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)), FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)), FIQT2 = sqrt(mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)))
+rmse_T2D1 <- data.frame(naive = sqrt(mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2)), CL1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)), CL2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)), CL3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)),  EB_df = sqrt(mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_scam = sqrt(mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_po = sqrt(mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_nb = sqrt(mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)), FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)))
 
-mse.n_T2D1 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), CL1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2), CL2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2), CL3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2),  EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_po = sum((true_beta - out_EB_gampo_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_nb = sum((true_beta - out_EB_gamnb_sig$beta_EB)^2) - sum(out_EB_sig$se^2), boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2), FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), FIQT2 = sum((true_beta - out_FIQT2_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2))
+mse.n_T2D1 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), CL1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2), CL2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2), CL3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2),  EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_po = sum((true_beta - out_EB_gampo_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_nb = sum((true_beta - out_EB_gamnb_sig$beta_EB)^2) - sum(out_EB_sig$se^2), boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2), FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2))
 
 ```
 
@@ -1938,18 +1814,17 @@ out_EB_gampo_sig <- out_EB_gam_po[2*(1-pnorm(abs(out_EB_gam_po$beta/out_EB_gam_p
 out_EB_gamnb_sig <- out_EB_gam_nb[2*(1-pnorm(abs(out_EB_gam_nb$beta/out_EB_gam_nb$se))) < 5e-4,]
 
 out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-4,]
-out_FIQT2_sig <- out_FIQT2[2*(1-pnorm(abs(out_FIQT2$beta/out_FIQT2$se))) < 5e-4,]
 out_BR_ss_sig <- out_BR_T2D1[2*(1-pnorm(abs(out_BR_T2D1$beta/out_BR_T2D1$se))) < 5e-4,]
 
 
 out_CL <- conditional_likelihood(summary_data = summary_stats, alpha=5e-4)
 
 
-mse_T2D1_5e_4 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), FIQT2 = mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
+mse_T2D1_5e_4 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
 
-rmse_T2D1_5e_4 <- data.frame(naive = sqrt(mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2)), CL1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)), CL2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)), CL3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)),  EB_df = sqrt(mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_scam = sqrt(mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_po = sqrt(mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_nb = sqrt(mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)), FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)), FIQT2 = sqrt(mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)))
+rmse_T2D1_5e_4 <- data.frame(naive = sqrt(mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2)), CL1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)), CL2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)), CL3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)),  EB_df = sqrt(mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_scam = sqrt(mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_po = sqrt(mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_nb = sqrt(mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)), FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)))
 
-mse.n_T2D1_5e_4 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), CL1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2), CL2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2), CL3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2),  EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_po = sum((true_beta - out_EB_gampo_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_nb = sum((true_beta - out_EB_gamnb_sig$beta_EB)^2) - sum(out_EB_sig$se^2), boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2), FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), FIQT2 = sum((true_beta - out_FIQT2_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2))
+mse.n_T2D1_5e_4 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), CL1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2), CL2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2), CL3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2),  EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_po = sum((true_beta - out_EB_gampo_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_nb = sum((true_beta - out_EB_gamnb_sig$beta_EB)^2) - sum(out_EB_sig$se^2), boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2), FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2))
 
 
 ```
@@ -1963,8 +1838,7 @@ mse.n_T2D1_5e_4
 ```
 
 We continue to see similar results in which the values of `beta_EB_df`
-and `beta_EB_scam` are the two lowest while `beta_FIQT2` is larger than
-that of its predecessor, `beta_FIQT`.
+and `beta_EB_scam` are the two lowest.
 
 <br>
 
@@ -1981,7 +1855,6 @@ out_EB_scam <- empirical_bayes(summary_data=summary_stats,method="scam")
 out_EB_gam_po <- empirical_bayes(summary_data=summary_stats,method="gam_po")
 out_EB_gam_nb <- empirical_bayes(summary_data=summary_stats,method="gam_nb")
 out_FIQT <- FDR_IQT(summary_data = summary_stats)
-out_FIQT2 <- FDR_IQT2(summary_data=summary_stats)
 
 out_EB_sig <- out_EB[2*(1-pnorm(abs(out_EB$beta/out_EB$se))) < 5e-8,]
 out_EB_df_sig <- out_EB_df[2*(1-pnorm(abs(out_EB_df$beta/out_EB_df$se))) < 5e-8,]
@@ -1990,7 +1863,6 @@ out_EB_gampo_sig <- out_EB_gam_po[2*(1-pnorm(abs(out_EB_gam_po$beta/out_EB_gam_p
 out_EB_gamnb_sig <- out_EB_gam_nb[2*(1-pnorm(abs(out_EB_gam_nb$beta/out_EB_gam_nb$se))) < 5e-8,]
 
 out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-8,]
-out_FIQT2_sig <- out_FIQT2[2*(1-pnorm(abs(out_FIQT2$beta/out_FIQT2$se))) < 5e-8,]
 out_BR_ss_sig <- out_BR_T2D2[2*(1-pnorm(abs(out_BR_T2D2$beta/out_BR_T2D2$se))) < 5e-8,]
 
 ```
@@ -1998,11 +1870,11 @@ out_BR_ss_sig <- out_BR_T2D2[2*(1-pnorm(abs(out_BR_T2D2$beta/out_BR_T2D2$se))) <
 ```{r, echo=FALSE}
 true_beta <- summary_data_sig_T2D_2$beta_rep 
 
-mse_T2D2 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), FIQT2 = mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
+mse_T2D2 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
 
-rmse_T2D2 <- data.frame(naive = sqrt(mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2)), CL1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)), CL2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)), CL3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)),  EB_df = sqrt(mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_scam = sqrt(mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_po = sqrt(mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_nb = sqrt(mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)), FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)), FIQT2 = sqrt(mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)))
+rmse_T2D2 <- data.frame(naive = sqrt(mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2)), CL1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)), CL2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)), CL3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)),  EB_df = sqrt(mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_scam = sqrt(mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_po = sqrt(mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_nb = sqrt(mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)), FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)))
 
-mse.n_T2D2 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), CL1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2), CL2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2), CL3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2),  EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_po = sum((true_beta - out_EB_gampo_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_nb = sum((true_beta - out_EB_gamnb_sig$beta_EB)^2) - sum(out_EB_sig$se^2), boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2), FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), FIQT2 = sum((true_beta - out_FIQT2_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2))
+mse.n_T2D2 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), CL1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2), CL2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2), CL3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2),  EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_po = sum((true_beta - out_EB_gampo_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_nb = sum((true_beta - out_EB_gamnb_sig$beta_EB)^2) - sum(out_EB_sig$se^2), boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2), FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2))
 
 ```
 
@@ -2017,8 +1889,7 @@ mse.n_T2D2
 The results here are not as straightforward as above. We still see that
 improvements have been made to the `mse` value of the original empirical
 Bayes method with the values of `beta_EB_scam` and `beta_EB_df` now
-below that of the `naive` approach. However, the adaptation to FDR IQT
-has now resulted in an improved performance.
+below that of the `naive` approach. 
 
 ```{r, echo=FALSE}
 
@@ -2033,22 +1904,21 @@ out_EB_gampo_sig <- out_EB_gam_po[2*(1-pnorm(abs(out_EB_gam_po$beta/out_EB_gam_p
 out_EB_gamnb_sig <- out_EB_gam_nb[2*(1-pnorm(abs(out_EB_gam_nb$beta/out_EB_gam_nb$se))) < 5e-4,]
 
 out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-4,]
-out_FIQT2_sig <- out_FIQT2[2*(1-pnorm(abs(out_FIQT2$beta/out_FIQT2$se))) < 5e-4,]
 out_BR_ss_sig <- out_BR_T2D2[2*(1-pnorm(abs(out_BR_T2D2$beta/out_BR_T2D2$se))) < 5e-4,]
 
 
 out_CL <- conditional_likelihood(summary_data = summary_stats, alpha=5e-4)
 
 
-mse_T2D2_5e_4 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), FIQT2 = mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
+mse_T2D2_5e_4 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
 
-rmse_T2D2_5e_4 <- data.frame(naive = sqrt(mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2)), CL1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)), CL2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)), CL3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)),  EB_df = sqrt(mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_scam = sqrt(mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_po = sqrt(mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_nb = sqrt(mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)), FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)), FIQT2 = sqrt(mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)))
+rmse_T2D2_5e_4 <- data.frame(naive = sqrt(mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2)), CL1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)), CL2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)), CL3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)),  EB_df = sqrt(mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_scam = sqrt(mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_po = sqrt(mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_nb = sqrt(mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)), FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)))
 
-mse.n_T2D2_5e_4 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), CL1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2), CL2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2), CL3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2),  EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_po = sum((true_beta - out_EB_gampo_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_nb = sum((true_beta - out_EB_gamnb_sig$beta_EB)^2) - sum(out_EB_sig$se^2), boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2), FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), FIQT2 = sum((true_beta - out_FIQT2_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2))
+mse.n_T2D2_5e_4 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), CL1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2), CL2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2), CL3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2),  EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_po = sum((true_beta - out_EB_gampo_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_nb = sum((true_beta - out_EB_gamnb_sig$beta_EB)^2) - sum(out_EB_sig$se^2), boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2), FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2))
 
 ```
 
-```{r}
+```{r, warning=FALSE}
 mse_T2D2_5e_4
 
 rmse_T2D2_5e_4
@@ -2236,8 +2106,7 @@ knitr::include_graphics("images/Height2_pos_abs(z)_full.png")
 
 #### Height 1
 
-We begin by applying the methods, including the alternative forms of FDR
-IQT and empirical Bayes discussed above, and use a threshold of `5e-8`
+We begin by applying the methods, including the alternative forms of empirical Bayes discussed above, and use a threshold of `5e-8`
 in order to classify significant SNPs. For **Height GWAS 1**, we obtain
 the following adjusted association estimates for the top 6 significant
 SNPs.
@@ -2254,7 +2123,6 @@ out_EB_scam <- empirical_bayes(summary_data=summary_stats,method="scam")
 out_EB_gam_po <- empirical_bayes(summary_data=summary_stats,method="gam_po")
 out_EB_gam_nb <- empirical_bayes(summary_data=summary_stats,method="gam_nb")
 out_FIQT <- FDR_IQT(summary_data = summary_stats)
-out_FIQT2 <- FDR_IQT2(summary_data=summary_stats)
 out_BR_height1 <- BR_ss(summary_data = summary_stats)
 
 out_EB_sig <- out_EB[2*(1-pnorm(abs(out_EB$beta/out_EB$se))) < 5e-8,]
@@ -2264,10 +2132,9 @@ out_EB_gampo_sig <- out_EB_gam_po[2*(1-pnorm(abs(out_EB_gam_po$beta/out_EB_gam_p
 out_EB_gamnb_sig <- out_EB_gam_nb[2*(1-pnorm(abs(out_EB_gam_nb$beta/out_EB_gam_nb$se))) < 5e-8,]
 
 out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-8,]
-out_FIQT2_sig <- out_FIQT2[2*(1-pnorm(abs(out_FIQT2$beta/out_FIQT2$se))) < 5e-8,]
 out_BR_ss_sig <- out_BR_height1[2*(1-pnorm(abs(out_BR_height1$beta/out_BR_height1$se))) < 5e-8,]
 
-results <- data.frame(out_CL, "beta_EB" = out_EB_sig$beta_EB, "beta_EB_scam" = out_EB_scam_sig$beta_EB, "beta_EB_df" = out_EB_df_sig$beta_EB, "beta_FIQT" = out_FIQT_sig$beta_FIQT, "beta_FIQT2" = out_FIQT2_sig$beta_FIQT, "beta_boot" = out_BR_ss_sig$beta_BR_ss)
+results <- data.frame(out_CL, "beta_EB" = out_EB_sig$beta_EB, "beta_EB_scam" = out_EB_scam_sig$beta_EB, "beta_EB_df" = out_EB_df_sig$beta_EB, "beta_FIQT" = out_FIQT_sig$beta_FIQT, "beta_boot" = out_BR_ss_sig$beta_BR_ss)
 
 results <- results %>% 
  mutate_if(is.numeric, round, digits=5)
@@ -2289,11 +2156,11 @@ summary_data_height_1 <- cbind(summary_data_height_1, z, p_val)
 summary_data_sig_height_1 <- summary_data_height_1[summary_data_height_1$p_val<5e-8,]
 true_beta <- summary_data_sig_height_1$beta_rep
 
-mse_height1 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), FIQT2 = mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
+mse_height1 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
 
-rmse_height1 <- data.frame(naive = sqrt(mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2)), CL1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)), CL2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)), CL3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)),  EB_df = sqrt(mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_scam = sqrt(mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_po = sqrt(mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_nb = sqrt(mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)), FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)), FIQT2 = sqrt(mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)))
+rmse_height1 <- data.frame(naive = sqrt(mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2)), CL1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)), CL2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)), CL3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)),  EB_df = sqrt(mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_scam = sqrt(mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_po = sqrt(mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_nb = sqrt(mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)), FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)))
 
-mse.n_height1 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), CL1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2), CL2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2), CL3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2),  EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_po = sum((true_beta - out_EB_gampo_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_nb = sum((true_beta - out_EB_gamnb_sig$beta_EB)^2) - sum(out_EB_sig$se^2), boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2), FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), FIQT2 = sum((true_beta - out_FIQT2_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2))
+mse.n_height1 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), CL1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2), CL2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2), CL3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2),  EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_po = sum((true_beta - out_EB_gampo_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_nb = sum((true_beta - out_EB_gamnb_sig$beta_EB)^2) - sum(out_EB_sig$se^2), boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2), FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2))
 
 
 ```
@@ -2316,9 +2183,7 @@ make Winner's Curse adjustments to estimated effect sizes of significant
 SNPs. Concerningly, we see that both of our suggested improvements on
 the original empirical Bayes method have performed worse, with the one
 in which we have fixed the degrees of freedom to 7 having a larger `mse`
-value than that of the `naive` approach. We note that contrary to
-previous observations the adaptation to FDR IQT is performing better
-than it does in its original form.
+value than that of the `naive` approach. 
 
 We also have a look at computing these same quantities when the
 threshold is changed to a less stringent one of `5e-4`. Here, we obtain
@@ -2336,18 +2201,17 @@ out_EB_gampo_sig <- out_EB_gam_po[2*(1-pnorm(abs(out_EB_gam_po$beta/out_EB_gam_p
 out_EB_gamnb_sig <- out_EB_gam_nb[2*(1-pnorm(abs(out_EB_gam_nb$beta/out_EB_gam_nb$se))) < 5e-4,]
 
 out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-4,]
-out_FIQT2_sig <- out_FIQT2[2*(1-pnorm(abs(out_FIQT2$beta/out_FIQT2$se))) < 5e-4,]
 out_BR_ss_sig <- out_BR_height1[2*(1-pnorm(abs(out_BR_height1$beta/out_BR_height1$se))) < 5e-4,]
 
 
 out_CL <- conditional_likelihood(summary_data = summary_stats, alpha=5e-4)
 
 
-mse_height1_5e_4 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), FIQT2 = mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
+mse_height1_5e_4 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
 
-rmse_height1_5e_4 <- data.frame(naive = sqrt(mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2)), CL1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)), CL2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)), CL3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)),  EB_df = sqrt(mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_scam = sqrt(mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_po = sqrt(mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_nb = sqrt(mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)), FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)), FIQT2 = sqrt(mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)))
+rmse_height1_5e_4 <- data.frame(naive = sqrt(mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2)), CL1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)), CL2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)), CL3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)),  EB_df = sqrt(mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_scam = sqrt(mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_po = sqrt(mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_nb = sqrt(mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)), FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)))
 
-mse.n_height1_5e_4 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), CL1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2), CL2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2), CL3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2),  EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_po = sum((true_beta - out_EB_gampo_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_nb = sum((true_beta - out_EB_gamnb_sig$beta_EB)^2) - sum(out_EB_sig$se^2), boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2), FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), FIQT2 = sum((true_beta - out_FIQT2_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2))
+mse.n_height1_5e_4 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), CL1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2), CL2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2), CL3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2),  EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_po = sum((true_beta - out_EB_gampo_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_nb = sum((true_beta - out_EB_gamnb_sig$beta_EB)^2) - sum(out_EB_sig$se^2), boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2), FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2))
 ```
 
 ```{r}
@@ -2385,7 +2249,6 @@ out_EB_scam <- empirical_bayes(summary_data=summary_stats,method="scam")
 out_EB_gam_po <- empirical_bayes(summary_data=summary_stats,method="gam_po")
 out_EB_gam_nb <- empirical_bayes(summary_data=summary_stats,method="gam_nb")
 out_FIQT <- FDR_IQT(summary_data = summary_stats)
-out_FIQT2 <- FDR_IQT2(summary_data=summary_stats)
 out_BR_height2 <- BR_ss(summary_data = summary_stats)
 
 out_EB_sig <- out_EB[2*(1-pnorm(abs(out_EB$beta/out_EB$se))) < 5e-8,]
@@ -2395,10 +2258,9 @@ out_EB_gampo_sig <- out_EB_gam_po[2*(1-pnorm(abs(out_EB_gam_po$beta/out_EB_gam_p
 out_EB_gamnb_sig <- out_EB_gam_nb[2*(1-pnorm(abs(out_EB_gam_nb$beta/out_EB_gam_nb$se))) < 5e-8,]
 
 out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-8,]
-out_FIQT2_sig <- out_FIQT2[2*(1-pnorm(abs(out_FIQT2$beta/out_FIQT2$se))) < 5e-8,]
 out_BR_ss_sig <- out_BR_height2[2*(1-pnorm(abs(out_BR_height2$beta/out_BR_height2$se))) < 5e-8,]
 
-results <- data.frame(out_CL, "beta_EB" = out_EB_sig$beta_EB, "beta_EB_scam" = out_EB_scam_sig$beta_EB, "beta_EB_df" = out_EB_df_sig$beta_EB, "beta_FIQT" = out_FIQT_sig$beta_FIQT, "beta_FIQT2" = out_FIQT2_sig$beta_FIQT, "beta_boot" = out_BR_ss_sig$beta_BR_ss)
+results <- data.frame(out_CL, "beta_EB" = out_EB_sig$beta_EB, "beta_EB_scam" = out_EB_scam_sig$beta_EB, "beta_EB_df" = out_EB_df_sig$beta_EB, "beta_FIQT" = out_FIQT_sig$beta_FIQT, "beta_boot" = out_BR_ss_sig$beta_BR_ss)
 
 results <- results %>% 
  mutate_if(is.numeric, round, digits=5)
@@ -2418,11 +2280,11 @@ summary_data_height_2 <- cbind(summary_data_height_2, z, p_val)
 summary_data_sig_height_2 <- summary_data_height_2[summary_data_height_2$p_val<5e-8,]
 true_beta <- summary_data_sig_height_2$beta_rep ## need this to be in the same order as out_EB etc.!
 
-mse_height2 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), FIQT2 = mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
+mse_height2 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
 
-rmse_height2 <- data.frame(naive = sqrt(mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2)), CL1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)), CL2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)), CL3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)),  EB_df = sqrt(mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_scam = sqrt(mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_po = sqrt(mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_nb = sqrt(mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)), FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)), FIQT2 = sqrt(mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)))
+rmse_height2 <- data.frame(naive = sqrt(mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2)), CL1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)), CL2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)), CL3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)),  EB_df = sqrt(mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_scam = sqrt(mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_po = sqrt(mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_nb = sqrt(mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)), FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)))
 
-mse.n_height2 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), CL1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2), CL2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2), CL3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2),  EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_po = sum((true_beta - out_EB_gampo_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_nb = sum((true_beta - out_EB_gamnb_sig$beta_EB)^2) - sum(out_EB_sig$se^2), boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2), FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), FIQT2 = sum((true_beta - out_FIQT2_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2))
+mse.n_height2 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), CL1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2), CL2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2), CL3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2),  EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_po = sum((true_beta - out_EB_gampo_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_nb = sum((true_beta - out_EB_gamnb_sig$beta_EB)^2) - sum(out_EB_sig$se^2), boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2), FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2))
 
 ```
 
@@ -2440,10 +2302,7 @@ the shape-constrained additive model is seen to perform the best
 overall. Unfortunately, the adaptation of the empirical Bayes method
 which fixes the degrees of freedom does not show an improvement and in
 fact results in worse performance than the FDR IQT and bootstrap methods
-as well. The change to FDR IQT seems to work slightly better here than
-the original definition of the method in which it doesn't adjust the
-estimated effect sizes of SNPs with very small $p$-values, i.e. \<
-`1e-15`.
+as well. 
 
 We repeat using the larger threshold of `5e-4`:
 
@@ -2458,18 +2317,17 @@ out_EB_gampo_sig <- out_EB_gam_po[2*(1-pnorm(abs(out_EB_gam_po$beta/out_EB_gam_p
 out_EB_gamnb_sig <- out_EB_gam_nb[2*(1-pnorm(abs(out_EB_gam_nb$beta/out_EB_gam_nb$se))) < 5e-4,]
 
 out_FIQT_sig <- out_FIQT[2*(1-pnorm(abs(out_FIQT$beta/out_FIQT$se))) < 5e-4,]
-out_FIQT2_sig <- out_FIQT2[2*(1-pnorm(abs(out_FIQT2$beta/out_FIQT2$se))) < 5e-4,]
 out_BR_ss_sig <- out_BR_height2[2*(1-pnorm(abs(out_BR_height2$beta/out_BR_height2$se))) < 5e-4,]
 
 
 out_CL <- conditional_likelihood(summary_data = summary_stats, alpha=5e-4)
 
 
-mse_height2_5e_4 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2), FIQT2 = mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
+mse_height2_5e_4 <- data.frame(naive = mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2), CL1 = mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2), CL2 = mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2), CL3 = mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2), EB = mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2),  EB_df = mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_scam = mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_po = mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2), EB_gam_nb = mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2), boot = mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2), FIQT = mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2))
 
-rmse_height2_5e_4 <- data.frame(naive = sqrt(mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2)), CL1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)), CL2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)), CL3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)),  EB_df = sqrt(mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_scam = sqrt(mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_po = sqrt(mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_nb = sqrt(mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)), FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)), FIQT2 = sqrt(mean((true_beta - out_FIQT2_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)))
+rmse_height2_5e_4 <- data.frame(naive = sqrt(mean((true_beta - out_EB_sig$beta)^2) - mean(out_EB_sig$se^2)), CL1 = sqrt(mean((true_beta - out_CL$beta.cl1)^2) - mean(out_EB_sig$se^2)), CL2 = sqrt(mean((true_beta - out_CL$beta.cl2)^2) - mean(out_EB_sig$se^2)), CL3 = sqrt(mean((true_beta - out_CL$beta.cl3)^2) - mean(out_EB_sig$se^2)), EB = sqrt(mean((true_beta - out_EB_sig$beta_EB)^2) - mean(out_EB_sig$se^2)),  EB_df = sqrt(mean((true_beta - out_EB_df_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_scam = sqrt(mean((true_beta - out_EB_scam_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_po = sqrt(mean((true_beta - out_EB_gampo_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), EB_gam_nb = sqrt(mean((true_beta - out_EB_gamnb_sig$beta_EB)^2) - mean(out_EB_sig$se^2)), boot = sqrt(mean((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - mean(out_EB_sig$se^2)), FIQT = sqrt(mean((true_beta - out_FIQT_sig$beta_FIQT)^2) - mean(out_EB_sig$se^2)))
 
-mse.n_height2_5e_4 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), CL1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2), CL2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2), CL3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2),  EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_po = sum((true_beta - out_EB_gampo_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_nb = sum((true_beta - out_EB_gamnb_sig$beta_EB)^2) - sum(out_EB_sig$se^2), boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2), FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2), FIQT2 = sum((true_beta - out_FIQT2_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2))
+mse.n_height2_5e_4 <- data.frame(naive = sum((true_beta - out_EB_sig$beta)^2) - sum(out_EB_sig$se^2), CL1 = sum((true_beta - out_CL$beta.cl1)^2) - sum(out_EB_sig$se^2), CL2 = sum((true_beta - out_CL$beta.cl2)^2) - sum(out_EB_sig$se^2), CL3 = sum((true_beta - out_CL$beta.cl3)^2) - sum(out_EB_sig$se^2), EB = sum((true_beta - out_EB_sig$beta_EB)^2) - sum(out_EB_sig$se^2),  EB_df = sum((true_beta - out_EB_df_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_scam = sum((true_beta - out_EB_scam_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_po = sum((true_beta - out_EB_gampo_sig$beta_EB)^2) - sum(out_EB_sig$se^2), EB_gam_nb = sum((true_beta - out_EB_gamnb_sig$beta_EB)^2) - sum(out_EB_sig$se^2), boot = sum((true_beta - out_BR_ss_sig$beta_BR_ss)^2) - sum(out_EB_sig$se^2), FIQT = sum((true_beta - out_FIQT_sig$beta_FIQT)^2) - sum(out_EB_sig$se^2))
 ```
 
 ```{r}
@@ -2509,8 +2367,8 @@ library(RColorBrewer)
 col <- brewer.pal(8,"Dark2")
 col1 <- brewer.pal(11,"RdYlBu")
 
-methods <- c("naive","CL1","CL2","CL3","EB","EB_df","EB_scam","EB_gam_po", "EB_gam_nb","boot","FIQT","FIQT2")
-GWAS <- c(rep("BMI GWAS 1",12), rep("BMI GWAS 2",12), rep("T2D GWAS 1",12), rep("T2D GWAS 2",12), rep("Height GWAS 1",12), rep("Height GWAS 2",12))
+methods <- c("naive","CL1","CL2","CL3","EB","EB_df","EB_scam","EB_gam_po", "EB_gam_nb","boot","FIQT")
+GWAS <- c(rep("BMI GWAS 1",11), rep("BMI GWAS 2",11), rep("T2D GWAS 1",11), rep("T2D GWAS 2",11), rep("Height GWAS 1",11), rep("Height GWAS 2",11))
 
 mse_5e_8 <- c(as.numeric(mse_BMI1[1,]), as.numeric(mse_BMI2[1,]), as.numeric(mse_T2D1[1,]), as.numeric(mse_T2D2[1,]), as.numeric(mse_height1[1,]), as.numeric(mse_height2[1,]))
 mse_5e_4 <- c(as.numeric(mse_BMI1_5e_4[1,]), as.numeric(mse_BMI2_5e_4[1,]), as.numeric(mse_T2D1_5e_4[1,]), as.numeric(mse_T2D2_5e_4[1,]), as.numeric(mse_height1_5e_4[1,]), as.numeric(mse_height2_5e_4[1,]))
