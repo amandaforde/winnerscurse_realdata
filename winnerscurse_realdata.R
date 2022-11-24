@@ -356,19 +356,11 @@ new_mse_5e_8$GWAS <- factor(new_mse_5e_8$GWAS, levels=c("BMI 1", "BMI 2", "T2D 1
 new_mse_5e_4$GWAS <- factor(new_mse_5e_4$GWAS, levels=c("BMI 1", "BMI 2", "T2D 1", "T2D 2", "Height 1", "Height 2"))
 
 
-plot_1 <- ggplot(new_mse_5e_8,aes(x=Method,y=MSE,fill=Method)) + geom_bar(stat="identity")+ geom_col(width=1) + facet_wrap(GWAS~.,ncol=6) + scale_shape_manual(values=c(6,20,20,20,15,18,18,18,18,10,15)) + scale_fill_manual(values=c(col[1],col[2],col[8],col[4],col[5],col[3],col[6],col[7],col1[1],col1[11],col1[9])) + xlab("Method") + 
-  ylab(expression(paste(italic("Estimated"), " MSE at ", 5%*%10^-8))) + theme_bw() +
-  theme(axis.text.x=element_blank(), #remove x axis labels
-        axis.ticks.x=element_blank()
-  ) + theme(text = element_text(size=12),legend.title = element_blank(),legend.box.background = element_rect(colour = "black"),panel.grid.major = element_blank(), panel.grid.minor = element_blank(),legend.spacing.y = unit(0, "mm"), legend.background=element_blank()) + geom_hline(data = new_mse_5e_8[new_mse_5e_8$Method=="naive",], aes(yintercept = MSE), linetype=2, size=0.5) + geom_hline(yintercept=0)
+plot_1 <- ggplot(new_mse_5e_8,aes(x=MSE,y=Method,fill=Method)) + geom_bar(stat="identity")+ geom_col(width=1) + facet_wrap(.~GWAS,nrow=6, strip.position = "right") + scale_shape_manual(values=c(6,20,20,20,15,18,18,18,18,10,15)) + scale_fill_manual(values=c(col[1],col[2],col[8],col[4],col[5],col[3],col[6],col[7],col1[1],col1[11],col1[9])) + ylab("Method") + 
+  xlab(expression(paste(italic("Estimated"), " MSE at ", 5%*%10^-8))) + theme_bw() + theme(text = element_text(size=12),legend.position = "none",panel.grid.major = element_blank(), panel.grid.minor = element_blank(), strip.text.y = element_text(angle = 0)) + geom_vline(data = new_mse_5e_8[new_mse_5e_8$Method=="naive",], aes(xintercept = MSE), linetype=2, size=0.5) + geom_vline(xintercept=0)
 
-
-
-plot_2 <- ggplot(new_mse_5e_4,aes(x=Method,y=MSE,fill=Method)) + geom_bar(stat="identity")+ geom_col(width=1) + facet_wrap(GWAS~.,ncol=6) + scale_shape_manual(values=c(6,20,20,20,15,18,18,18,18,10,15)) + scale_fill_manual(values=c(col[1],col[2],col[8],col[4],col[5],col[3],col[6],col[7],col1[1],col1[11],col1[9])) + xlab("Method") + 
-  ylab(expression(paste(italic("Estimated"), " MSE at ", 5%*%10^-4))) + theme_bw() +
-  theme(axis.text.x=element_blank(), #remove x axis labels
-        axis.ticks.x=element_blank()
-  ) + theme(text = element_text(size=12),legend.title = element_blank(),legend.box.background = element_rect(colour = "black"),panel.grid.major = element_blank(), panel.grid.minor = element_blank(),legend.spacing.y = unit(0, "mm"), legend.background=element_blank()) + geom_hline(data = new_mse_5e_4[new_mse_5e_4$Method=="naive",], aes(yintercept = MSE), linetype=2, lwd=0.5) + geom_hline(yintercept=0)
+plot_2 <- ggplot(new_mse_5e_4,aes(x=MSE,y=Method,fill=Method)) + geom_bar(stat="identity")+ geom_col(width=1) + facet_wrap(GWAS~.,nrow=6, strip.position = "right") + scale_shape_manual(values=c(6,20,20,20,15,18,18,18,18,10,15)) + scale_fill_manual(values=c(col[1],col[2],col[8],col[4],col[5],col[3],col[6],col[7],col1[1],col1[11],col1[9])) + ylab("Method") + 
+  xlab(expression(paste(italic("Estimated"), " MSE at ", 5%*%10^-4))) + theme_bw() + theme(text = element_text(size=12),legend.position = "none",panel.grid.major = element_blank(), panel.grid.minor = element_blank(), strip.text.y = element_text(angle=0)) + geom_vline(data = new_mse_5e_4[new_mse_5e_4$Method=="naive",], aes(xintercept = MSE), linetype=2, size=0.5) + geom_vline(xintercept=0)
 
 
 plot_1
